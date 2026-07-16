@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-07-17 — 公開ステータスページ（`GET /` / `GET /statusz`）
+
+ルートURLを、ログイン不要で稼働状況と利用者数がわかる公開ステータスページにした。
+先の「案内ページを返す」変更（下記）は本番の pm2（dist 実行）へ未反映のままだったため、
+本デプロイで `GET /` の 404 解消とステータスページ化を同時に行う。
+
+- `GET /statusz` 🔓認証不要 — 稼働状態と集計値のみを返す JSON。60秒インメモリキャッシュ
+  （誰でも叩けるため DB を保護）。COUNT は 1 クエリにまとめる。常に 200（表示用。
+  外形監視は従来どおり `/healthz`）。
+  - 返す値: `status`（ok/starting/unhealthy、healthz と同判定）/ `watchers` / `clients` /
+    `unique_users`（両者の合算）/ `watch_links` / `devices` / `generated_at`。
+- `GET /` — 静的 HTML（`placeholder/index.html`）。ページ内 JS が `/statusz` を fetch して
+  数値を埋める。バックエンド停止時は Caddy が同 HTML をフォールバック表示し、fetch 失敗を
+  検知して「停止中」表示に切り替わる（1ファイルで稼働時・停止時の両方に対応）。
+- **公開するのは集計数のみ**。個人名・ID・個別ステータス・**ステータス別内訳（ALERT/SOS 件数）**・
+  時刻情報は出さない（絶対ルール2/3。集計以外を公開すると特定物件の異常を部外者に推測される）。
+  テストで個人情報キーが露出しないことを固定した（`tests/api-contract.integration.test.ts`）。
+- ヘルス判定ロジックを `evaluateHealth()` に切り出し `/healthz` と `/statusz` で共有。
+  API のルート・エラー形式・not-found ハンドラ・判定エンジンは一切変更なし。
+
 ## 2026-07-17 — ルートURLで案内ページを返すよう変更
 
 本番起動後、ブラウザで https://mimamori-server.devrelay.io/ を開くと

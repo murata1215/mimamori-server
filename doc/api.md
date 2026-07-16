@@ -237,6 +237,23 @@ Base URL: `https://mimamori-server.devrelay.io`
 - `POST /v1/webhooks/revenuecat` — `Authorization` ヘッダ照合（定数時間比較）。未設定時は503
 - `GET /healthz` — 外形監視用（DB＋判定ジョブ。10分停止で503）
 - `GET /livez` — プロセス生存のみ。**外形監視には使わない**
+- `GET /` — 公開ステータスページ（HTML）。`/statusz` を fetch して表示。バックエンド停止時は Caddy が同HTMLをフォールバック表示
+- `GET /statusz` 🔓認証不要 — 公開ステータス（集計のみ）。常に200。**外形監視には使わない（表示用）**
+
+### `GET /statusz` 🔓認証不要
+ログイン不要で稼働状態と利用者数の**集計値のみ**を返す。60秒キャッシュ。
+```json
+{ "service": "mimamori-server",
+  "status": "ok",            // 'ok' | 'starting' | 'unhealthy'（healthz と同じ判定）
+  "watchers": 3,             // みまもりユーザー数
+  "clients": 2,              // みまもられるユーザー数
+  "unique_users": 5,         // watchers + clients
+  "watch_links": 4,          // 見守り接続（ペア）数
+  "devices": 2,              // 登録端末数
+  "generated_at": "2026-07-17T08:00:00.000Z" }
+```
+**個人名・ID・個別ステータス・ステータス別内訳（ALERT/SOS件数）・時刻情報は絶対に返さない**
+（絶対ルール2/3。集計以外を公開すると特定物件の異常を部外者に推測される）。
 
 ### `POST /v1/webhooks/switchbot` 🔓署名認証
 HMAC-SHA256（`sign` / `t` / `nonce` ヘッダ）＋5分のリプレイ窓。未設定時は503。

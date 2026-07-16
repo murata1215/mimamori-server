@@ -139,6 +139,55 @@ describe('FCM data payload — client_name（依頼1）', () => {
   });
 });
 
+describe('GET /statusz — 公開ステータス（集計のみ・個人情報非公開）', () => {
+  it('200 で集計キーを返し、稼働状態と利用者数が数値で載る', async () => {
+    const res = await app.inject({ method: 'GET', url: '/statusz' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+
+    expect(body.service).toBe('mimamori-server');
+    // healthz と同じ判定。テスト環境では ok または starting のいずれか。
+    expect(['ok', 'starting', 'unhealthy']).toContain(body.status);
+
+    // 集計キーがすべて数値であること。
+    for (const key of ['watchers', 'clients', 'unique_users', 'watch_links', 'devices']) {
+      expect(typeof body[key]).toBe('number');
+    }
+    // beforeEach で watcher と client を1件ずつ作っているため 1 以上。
+    expect(body.watchers).toBeGreaterThanOrEqual(1);
+    expect(body.clients).toBeGreaterThanOrEqual(1);
+    expect(body.unique_users).toBe(body.watchers + body.clients);
+    expect(typeof body.generated_at).toBe('string');
+  });
+
+  it('個人を特定しうる情報を一切含めない（絶対ルール2/3）', async () => {
+    const res = await app.inject({ method: 'GET', url: '/statusz' });
+    const body = res.json();
+
+    // 名前・ID・個別/内訳ステータス・時刻系のキーが露出していないこと。
+    const forbidden = [
+      'display_name', 'name', 'client_id', 'watcher_id', 'id', 'email',
+      'last_alive_event_at', 'last_event_at', 'status_changed_at',
+      'ALERT', 'SOS', 'CONFIRMING', 'WATCH', 'ALIVE',
+      'alert', 'sos', 'incidents', 'by_status', 'statuses',
+    ];
+    for (const key of forbidden) {
+      expect(body).not.toHaveProperty(key);
+    }
+    // status は集約ラベル（ok/starting/unhealthy）のみで、内訳オブジェクトではない。
+    expect(typeof body.status).toBe('string');
+  });
+});
+
+describe('GET / — 公開ステータスページ（HTML）', () => {
+  it('text/html を返す（JSON エラーではない）', async () => {
+    const res = await app.inject({ method: 'GET', url: '/' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
+    expect(res.body).toContain('mimamori-server');
+  });
+});
+
 describe('POST /v1/sos/:id/resolve — 空ボディ受理（依頼2）', () => {
   /** SOS を発動して incident_id を返す */
   async function fireSos(): Promise<string> {

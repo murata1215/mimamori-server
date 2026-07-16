@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>mimamori-server</title>
+  <title>mimamori-server — 稼働状況</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -14,38 +14,148 @@
       background: #0f0f23;
       color: #e0e0e0;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      padding: 2rem 1rem;
     }
-    .container {
-      text-align: center;
-      padding: 2rem;
-    }
+    .container { text-align: center; width: 100%; max-width: 720px; }
     h1 {
       font-size: 2.5rem;
-      margin-bottom: 1rem;
+      margin-bottom: 0.5rem;
       background: linear-gradient(135deg, #667eea, #764ba2);
       -webkit-background-clip: text;
+      background-clip: text;
       -webkit-text-fill-color: transparent;
     }
-    .status {
-      font-size: 1.2rem;
-      color: #888;
+    .subtitle { font-size: 1rem; color: #888; margin-bottom: 1.75rem; }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 1.1rem;
+      font-weight: 600;
+      padding: 0.5rem 1.25rem;
+      border-radius: 999px;
+      margin-bottom: 2rem;
+      background: #1a1a35;
+      border: 1px solid #2a2a4a;
+    }
+    .dot { width: 0.7rem; height: 0.7rem; border-radius: 50%; background: #555; }
+    .status-badge.ok .dot { background: #34d399; box-shadow: 0 0 10px #34d399; }
+    .status-badge.starting .dot { background: #fbbf24; box-shadow: 0 0 10px #fbbf24; }
+    .status-badge.down .dot { background: #f87171; box-shadow: 0 0 10px #f87171; }
+    .status-badge.ok { color: #34d399; }
+    .status-badge.starting { color: #fbbf24; }
+    .status-badge.down { color: #f87171; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 1rem;
       margin-bottom: 2rem;
     }
-    .powered-by {
-      font-size: 0.85rem;
-      color: #555;
+    .card {
+      background: #1a1a35;
+      border: 1px solid #2a2a4a;
+      border-radius: 12px;
+      padding: 1.25rem 1rem;
     }
-    .powered-by a {
-      color: #667eea;
-      text-decoration: none;
+    .card .value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #f0f0f0;
+      line-height: 1.1;
     }
+    .card .value.dim { color: #555; }
+    .card .label { font-size: 0.85rem; color: #888; margin-top: 0.35rem; }
+    .updated { font-size: 0.8rem; color: #555; margin-bottom: 0.75rem; min-height: 1.1em; }
+    .powered-by { font-size: 0.85rem; color: #555; }
+    .powered-by a { color: #667eea; text-decoration: none; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>mimamori-server</h1>
-    <p class="status">見守りサービス API サーバーです。ブラウザから利用する画面はありません。</p>
+    <p class="subtitle">見守りサービス 稼働状況</p>
+
+    <div id="badge" class="status-badge">
+      <span class="dot"></span>
+      <span id="badge-text">状態を確認中…</span>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="value dim" id="watchers">–</div>
+        <div class="label">みまもりユーザー</div>
+      </div>
+      <div class="card">
+        <div class="value dim" id="clients">–</div>
+        <div class="label">みまもられるユーザー</div>
+      </div>
+      <div class="card">
+        <div class="value dim" id="unique_users">–</div>
+        <div class="label">ユニークユーザー</div>
+      </div>
+      <div class="card">
+        <div class="value dim" id="watch_links">–</div>
+        <div class="label">見守り接続</div>
+      </div>
+      <div class="card">
+        <div class="value dim" id="devices">–</div>
+        <div class="label">登録端末</div>
+      </div>
+    </div>
+
+    <p class="updated" id="updated"></p>
     <p class="powered-by">Powered by <a href="https://devrelay.io">DevRelay</a> Testflight</p>
   </div>
+
+  <script>
+    (function () {
+      var STATE = {
+        ok:       { cls: 'ok',       text: '稼働中' },
+        starting: { cls: 'starting', text: '起動中' },
+        down:     { cls: 'down',     text: 'サーバー停止中またはメンテナンス中' }
+      };
+
+      function setBadge(key) {
+        var s = STATE[key] || STATE.down;
+        var badge = document.getElementById('badge');
+        badge.className = 'status-badge ' + s.cls;
+        document.getElementById('badge-text').textContent = s.text;
+      }
+
+      function setNum(id, n) {
+        var el = document.getElementById(id);
+        el.textContent = String(n);
+        el.classList.remove('dim');
+      }
+
+      function fmtTime(iso) {
+        try {
+          var d = new Date(iso);
+          return '最終更新: ' + d.toLocaleString('ja-JP');
+        } catch (e) { return ''; }
+      }
+
+      fetch('/statusz', { cache: 'no-store' })
+        .then(function (r) {
+          if (!r.ok) throw new Error('status ' + r.status);
+          return r.json();
+        })
+        .then(function (d) {
+          setBadge(d.status === 'ok' ? 'ok' : (d.status === 'starting' ? 'starting' : 'down'));
+          setNum('watchers', d.watchers);
+          setNum('clients', d.clients);
+          setNum('unique_users', d.unique_users);
+          setNum('watch_links', d.watch_links);
+          setNum('devices', d.devices);
+          document.getElementById('updated').textContent = fmtTime(d.generated_at);
+        })
+        .catch(function () {
+          // /statusz に到達できない = バックエンド停止（Caddy フォールバック表示）。
+          setBadge('down');
+          document.getElementById('updated').textContent =
+            'サーバーに接続できませんでした。復旧までしばらくお待ちください。';
+        });
+    })();
+  </script>
 </body>
 </html>
