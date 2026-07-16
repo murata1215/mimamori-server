@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-07-17 — FCM data payload に `client_name` 追加（Flutter連携）
+
+mimamori-flutter チームとの API 突き合わせによる依頼2点への対応。
+
+### 依頼1（実装）: ウォッチャー宛 push に `client_name` を追加
+
+ウォッチャー端末がバックグラウンド／起動直後にプッシュを受けたとき、API 照会なしに
+「誰の」通知かを表示できるようにするため、`data` に `client_name`（クライアントの
+`display_name`）を載せた。対象 kind: `watch` / `alert` / `sos` / `permission`。
+
+- 変更は `src/notify/dispatcher.ts` の data 引数のみ。各関数は元々 display_name を
+  取得済みで追加クエリは不要。判定エンジン・状態遷移・通知の送信ロジックは無改修
+- **`outage` は対象外**。サービス停止の一斉通知で特定クライアントに紐づかず、
+  `client_id` すら持たないため `client_name` を付与できない（Flutter 側は汎用文言で表示）
+- クライアント端末宛の `confirming` / `silent` にも不要
+- プライバシー: `client_name` は既に通知 body（「◯◯さんの…」）に含まれる情報であり、
+  ウォッチャーへの開示レベルは変わらない（原則2に抵触しない）
+
+### 依頼2（確認）: `POST /v1/sos/:id/resolve` の空ボディ受理
+
+`outcome` は optional（`z.enum([...]).optional()`）かつハンドラは `req.body ?? {}` で
+受けるため、**ボディ省略・`{}` いずれも 400 にならず 200 `{ok:true}` を返す**ことを
+`tests/api-contract.integration.test.ts` で回帰テスト化した。コード修正は不要だった。
+
 ## 2026-07-17 — GitHub 公開（アプリケーションコードの変更なし）
 
 `https://github.com/murata1215/mimamori-server` へ初回コミット。**リポジトリは public**。

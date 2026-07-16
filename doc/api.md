@@ -154,9 +154,10 @@ Base URL: `https://mimamori-server.devrelay.io`
 
 ### `POST /v1/sos/:id/resolve`
 ```json
-{ "outcome": "was_safe" }   // was_safe | was_real（誤報率KPIの集計に使う）
+{ "outcome": "was_safe" }   // was_safe | was_real（誤報率KPIの集計に使う）。省略可
 → { "ok": true }
 ```
+`outcome` は optional。**ボディ省略・`{}` でも 400 にならず 200 を返す**（`req.body ?? {}` で受ける）。
 解決すると位置へのアクセスが即座に不可になり、状態が ALIVE へ戻る。
 
 ### `POST /v1/clients/:id/resolve-alert`
@@ -260,6 +261,34 @@ HMAC-SHA256（`sign` / `t` / `nonce` ヘッダ）＋5分のリプレイ窓。未
 ```
 **このソースは ALIVE 復帰を起こさない。** confidence 70 の弱シグナルとして
 `clients.last_weak_signal_at` に入り、クロス判定にのみ使われる。理由は下記。
+
+---
+
+## FCM プッシュ通知の data payload
+
+サーバーから送るプッシュの `data` は全て**文字列値**（FCMの制約）。`kind` で種別を判別する。
+`client_id` は全 push に付与される。ウォッチャー宛の kind には `client_name`
+（クライアントの `display_name`）も載る — 端末がオフライン・起動直後でも API 照会なしに
+「誰の」通知かを表示できるようにするため（flutter連携 2026-07-17）。
+
+| kind | 送信先 | data の追加キー |
+|---|---|---|
+| `confirming` | クライアント端末 | （`client_id` のみ） |
+| `silent` | クライアント端末 | `action`（`heartbeat_now`） |
+| `watch` | ウォッチャー | `status`, `client_name` |
+| `alert` | ウォッチャー | `status`, `client_name`, `device_silent` |
+| `sos` | ウォッチャー | `status`, `client_name`, `incident_id` |
+| `permission` | ウォッチャー | `status`, `client_name`, `reason` |
+| `outage` | 全ウォッチャー | `gap_minutes`（※特定クライアントに紐づかないため `client_id` / `client_name` は無い） |
+
+```json
+// alert の例
+{ "kind": "alert", "client_id": "uuid", "client_name": "母", "status": "ALERT", "device_silent": "true" }
+```
+
+`confirming` / `silent` はクライアント端末宛のため `client_name` を持たない。
+`outage` はサービス停止の一斉通知で、特定クライアント文脈が存在しないため
+`client_id` / `client_name` を持たない。
 
 ---
 

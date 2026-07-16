@@ -136,6 +136,9 @@ describe('デッドマンスイッチ — 完全な検知シーケンス', () =>
     const watchPush = fcm.sent.find((s) => s.kind === 'watch');
     expect(watchPush).toBeDefined();
     expect(watchPush!.token).toBe('watcher-token');
+    // data payload に client_name を載せる（flutter連携 2026-07-17）。
+    // ウォッチャー端末がオフラインでも「誰の」通知かを表示できるようにするため。
+    expect(watchPush!.data?.client_name).toBe('テスト対象');
   });
 
   it('閾値超過で CONFIRMING になり、クライアント端末へ全画面通知が飛ぶ', async () => {
@@ -164,6 +167,7 @@ describe('デッドマンスイッチ — 完全な検知シーケンス', () =>
     const alertPush = fcm.sent.find((s) => s.kind === 'alert');
     expect(alertPush).toBeDefined();
     expect(alertPush!.token).toBe('watcher-token');
+    expect(alertPush!.data?.client_name).toBe('テスト対象');
   });
 
   it('本人確認へ応答すれば ALERT に至らず即 ALIVE へ復帰する（誤報の逃げ道）', async () => {

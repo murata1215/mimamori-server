@@ -12,6 +12,18 @@
  * | 権限失効    | なし                | 「設定に問題」push                 |
  *
  * 全ての送信結果は audit_log に記録する（免責の証跡）。
+ *
+ * 【data payload の client_name】(flutter 連携 2026-07-17)
+ * ウォッチャー宛の kind（watch / alert / sos / permission）には、
+ * クライアントの display_name を client_name として載せる。
+ * ウォッチャー端末がオフライン・起動直後でも、API照会なしに
+ * 「誰の」通知かを表示できるようにするため。
+ * この値は既に通知 body（「◯◯さんの…」）に含まれる情報であり、
+ * 開示レベルは変わらない（原則2に抵触しない）。
+ *
+ * outage は特定クライアントに紐づかない全ウォッチャー宛の
+ * サービス停止通知のため、client_name も client_id も持たない。
+ * クライアント端末宛の confirming / silent にも client_name は不要。
  */
 import { query } from '../db/pool.js';
 import { audit } from '../lib/audit.js';
@@ -194,7 +206,7 @@ export async function notifyWatch(clientId: string): Promise<void> {
       'watch',
       '見守りのお知らせ',
       `${name}さんの様子をしばらく確認できていません。`,
-      { status: 'WATCH' },
+      { status: 'WATCH', client_name: name },
     );
   }
 }
@@ -219,6 +231,7 @@ export async function notifyAlert(clientId: string, deviceSilent: boolean): Prom
   for (const w of watchers) {
     const pushed = await pushToWatcher(clientId, w, 'alert', '⚠️ 警告', body, {
       status: 'ALERT',
+      client_name: profile.name,
       device_silent: String(deviceSilent),
     });
 
@@ -257,6 +270,7 @@ export async function notifySos(clientId: string, incidentId: string): Promise<v
   for (const w of watchers) {
     await pushToWatcher(clientId, w, 'sos', '🆘 SOS', body, {
       status: 'SOS',
+      client_name: name,
       incident_id: incidentId,
     });
 
@@ -292,7 +306,7 @@ export async function notifyPermissionIssue(clientId: string, reason: string): P
       'permission',
       '設定に問題があります',
       `${name}さんの端末から信号が届いていません（電池切れ/設定の可能性）。`,
-      { status: 'PERMISSION_ISSUE', reason },
+      { status: 'PERMISSION_ISSUE', client_name: name, reason },
     );
   }
 }
