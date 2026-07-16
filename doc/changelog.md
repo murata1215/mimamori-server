@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-07-17 — GitHub 公開（アプリケーションコードの変更なし）
+
+`https://github.com/murata1215/mimamori-server` へ初回コミット。**リポジトリは public**。
+`src/` 配下の変更は0件。追加したのは `README.md`・`.env.example`・`.gitignore` の除外設定のみ。
+
+### 公開から除外したものと理由
+
+公開は git 履歴・GitHub のキャッシュ・fork に残り、あとから撤回できない。
+一方あとから足すのはいつでもできる。よって判断が付かないものは「含めない」を選んだ。
+
+- **`.devrelay-files/*-spec*.md`（一次情報の仕様書3点）** — 事業戦略・市場根拠を含むため除外。
+  公開してよいかはユーザー未確認。公開する場合は `.gitignore` の該当行を消すだけでよい
+- **`.devrelay/`（会話履歴 `conversation.json`）** — 公開すべきでないため除外
+- **`.env`** — 実際のDBパスワードとJWT署名鍵が入っている。元から `.gitignore` 済み。
+  push 前に、これらの値がコミット内容へ文字列として混入していないことを検索で確認した
+
+`vitest.config.ts` の `*_WEBHOOK_SECRET` はテスト用ダミーであり、実鍵ではない。
+
+### 補足
+
+`.env.example` は `src/config.ts` の zod スキーマから全変数を起こしたもの。
+`config.ts` を変更したら追随させること（起動時 fail fast の対象が増減するため）。
+
 ## 2026-07-17 — Phase 2（センサーアダプタ）
 
 `mimamori-spec-server.md` §8「Phase 2 拡張インターフェース」の実装。

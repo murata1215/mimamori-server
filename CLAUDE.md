@@ -14,6 +14,10 @@ See `rules/devrelay.md` for DevRelay rules.
 | Port | 9021 |
 | DB | PostgreSQL `mimamori-server`（user: `mimamori-server_user`） |
 | ディレクトリ | /home/devrelay/testflight/mimamori-server |
+| GitHub | https://github.com/murata1215/mimamori-server（**public**） |
+
+リポジトリは公開されている。コミットする内容が公開に耐えるかを常に確認すること
+（除外の方針と理由は `doc/changelog.md` の 2026-07-17 GitHub公開 の項）。
 
 ## ホスティング構成
 
