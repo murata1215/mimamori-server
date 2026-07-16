@@ -1,0 +1,275 @@
+# mimamori-server API リファレンス (Phase 1 + Phase 2)
+
+Base URL: `https://mimamori-server.devrelay.io`
+
+認証は JWT（`Authorization: Bearer <token>`）。トークンは2系統あり、**互いのAPIを叩けない**。
+
+| 種別 | 発行 | 対象 |
+|---|---|---|
+| watcher access | ログイン | ウォッチャーAPI |
+| watcher refresh | ログイン | 再発行のみ（APIは叩けない） |
+| device | ペアリング | クライアント端末API |
+
+---
+
+## 認証・ペアリング
+
+### `POST /v1/watchers` — ウォッチャー登録
+```json
+{ "display_name": "けいすけ", "email": "a@example.com", "password": "8文字以上" }
+→ 201 { "watcher_id": "...", "access_token": "...", "refresh_token": "..." }
+→ 409 email_taken
+```
+
+### `POST /v1/watchers/login`
+```json
+{ "email": "a@example.com", "password": "..." }
+→ 200 { "watcher_id": "...", "access_token": "...", "refresh_token": "..." }
+→ 401 invalid_credentials
+```
+ユーザー列挙を防ぐため、未登録メールでも同じ応答時間・同じエラーを返す。
+
+### `POST /v1/watchers/refresh`
+```json
+{ "refresh_token": "..." } → 200 { "access_token": "...", "refresh_token": "..." }
+```
+
+### `GET /v1/watchers/me` 🔒watcher
+```json
+→ { "id","display_name","email","plan","notify_watch","phone_number","total","billable" }
+```
+
+### `PUT /v1/watchers/me/fcm-token` 🔒watcher
+```json
+{ "fcm_token": "..." } → { "ok": true }
+```
+
+### `PUT /v1/watchers/me/settings` 🔒watcher
+```json
+{ "notify_watch": true, "phone_number": "+8190..." } → { "ok": true }
+```
+
+### `POST /v1/pairing-codes` 🔒watcher
+6桁コードを発行（TTL 15分・使い捨て）。
+```json
+→ 201 { "code": "123456", "expires_in_minutes": 15 }
+→ 402 payment_required   // 無料枠(2人)超過 → ペイウォールを表示
+```
+
+### `POST /v1/clients/pair` 🔓認証不要
+コード自体が認証材料。**`consent_version` は必須**（法務要件: 同意なしにクライアントを作らない）。
+```json
+{
+  "code": "123456", "display_name": "母", "consent_version": "v1.0",
+  "platform": "android", "app_version": "0.1.0",
+  "fcm_token": "...", "usage_frequency": "occasional"  // "frequent"→10h / "occasional"→15h
+}
+→ 201 { "client_id": "...", "device_id": "...", "device_token": "..." }
+→ 400 invalid_code   // 無効・期限切れ・使用済み
+```
+
+---
+
+## クライアント端末 🔒device
+
+### `POST /v1/heartbeats`
+バッチ受付（キュー再送対応）。レート制限: 15分あたり20回。
+
+```json
+{
+  "heartbeats": [{
+    "occurred_at": "2026-07-16T12:00:00Z",   // 元の発生時刻を保持（再送時も）
+    "battery_level": 80,
+    "screen_on_count": 3,        // 回数のみ。時刻詳細は送らない
+    "had_app_usage": true,       // boolean のみ。何のアプリかは送らない
+    "app_version": "0.1.0"
+  }],
+  "delivery_stats": { "sent": 10, "failed": 0, "queued": 0 }   // KPI計測用
+}
+→ { "accepted": 1, "duplicates": 0, "revived": true }
+```
+
+**生存イベント扱いになる条件**: `screen_on_count > 0` または `had_app_usage = true`。
+両方0のハートビートは「端末は生きているが操作なし」として経過時間のカウントを継続する。
+
+未来時刻の `occurred_at` は受信時刻に丸める（端末の時計ズレ対策）。
+同一 `occurred_at` の再送は重複として無視（冪等）。
+
+### `POST /v1/sos`
+**位置情報を受け取る唯一のエンドポイント。** 判定ジョブを介さず即時にウォッチャーへ通知。
+```json
+{ "lat": 35.6812, "lng": 139.7671, "battery_level": 15 }   // lat/lng は省略可（位置不明でも送信優先）
+→ 201 { "incident_id": "..." }
+```
+
+### `POST /v1/confirm-alive`
+本人確認への応答。即 ALIVE へ復帰。
+```json
+→ { "ok": true, "status": "ALIVE" }
+```
+
+### `POST /v1/permission-health`
+```json
+{ "issues": ["usage_stats", "battery_optimization"] }  → { "ok": true }
+```
+空配列なら通知しない（問題解消の申告）。
+
+### `PUT /v1/devices/me/fcm-token`
+```json
+{ "fcm_token": "..." } → { "ok": true }
+```
+
+---
+
+## ウォッチャー 🔒watcher
+
+### `GET /v1/clients`
+**返すのはステータスのみ。イベントデータは絶対に返さない**（原則1）。
+緊急度順（SOS→ALERT→CONFIRMING→WATCH→ALIVE）にソート済み。
+
+```json
+[{
+  "id": "...", "display_name": "母",
+  "status": "ALIVE",                      // ALIVE|WATCH|CONFIRMING|ALERT|SOS
+  "status_changed_at": "2026-07-16T...",
+  "has_issue": false,                     // 端末沈黙（45分以上HBなし）= 灰色バッジ
+  "property_tag": null
+}]
+```
+
+`last_alive_event_at` / `battery_level` / `threshold` 等は**構造的に返らない**
+（zodのレスポンススキーマで固定。スキーマを通らない値は500になり漏れない）。
+
+### `GET /v1/clients/:id/status-history`
+遷移のみの粒度。判定内部情報（閾値等）は含まない。
+```json
+[{ "from": "WATCH", "to": "ALIVE", "changed_at": "2026-07-16T..." }]
+```
+
+### `GET /v1/sos/:id`
+位置を含む唯一のレスポンス。**resolve後・purge後(30日)は404**。
+```json
+{ "id","client_id","client_name","latitude","longitude","battery_level","fired_at","resolved_at" }
+```
+
+### `POST /v1/sos/:id/resolve`
+```json
+{ "outcome": "was_safe" }   // was_safe | was_real（誤報率KPIの集計に使う）
+→ { "ok": true }
+```
+解決すると位置へのアクセスが即座に不可になり、状態が ALIVE へ戻る。
+
+### `POST /v1/clients/:id/resolve-alert`
+```json
+{ "outcome": "was_safe" }   // 必須
+→ { "ok": true }
+→ 409 not_in_alert
+```
+`was_safe` のみ ALIVE へ戻す。`was_real` は状態を維持（対応中）。**誤報率KPIの計測に必須**。
+
+---
+
+## センサー（Phase 2）🔒watcher
+
+対応ソースと信頼度（**信頼度はサーバーが決める。リクエストからは指定できない**）:
+
+| source_type | confidence | 生存判定への効き方 |
+|---|---|---|
+| `switchbot_contact` | 100 | 生存イベント。**即 ALIVE 復帰** |
+| `switchbot_plug` | 100 | 生存イベント。即 ALIVE 復帰 |
+| `power_meter` | 70 | **弱シグナル。ALIVE 復帰しない**（クロス判定にのみ使う） |
+
+### `POST /v1/clients/sensor-only`
+スマホを持たない人／センサーのみ物件のクライアントを作る（`has_app=false`）。
+判定は CONFIRMING をスキップし、WATCH → 猶予 → ALERT になる。
+```json
+{ "display_name": "空き家A", "consent_version": "v1.0", "property_tag": "物件A" }
+→ 201 { "client_id": "...", "has_app": false, "message": "センサーを登録するまで見守りは開始されません" }
+→ 402 payment_required   // 無料枠(2人)超過。ペアリング経路と同じ枠を消費する
+```
+同意は**ウォッチャーによる代理申告**として記録される（本人が操作する画面が無いため）。
+監査ログに `consent_by: "watcher_declaration"` が残る。同意取得の実体はサービス外で担保すること。
+
+### `POST /v1/clients/:id/sensors`
+```json
+{ "source_type": "switchbot_contact", "source_id": "AA:BB:CC:DD:EE:01", "display_name": "玄関" }
+→ 201 { "id": "...", "source_type": "...", "is_primary_signal": true }
+→ 409 sensor_already_registered   // 1デバイス = 1クライアント。登録先は漏らさない
+→ 404                              // 権限なし
+```
+
+### `GET /v1/clients/:id/sensors`
+**返すのは設定情報のみ。観測結果は返さない**（原則1）。
+```json
+[{ "id","source_type","source_label","display_name","enabled","is_primary_signal","created_at" }]
+```
+`last_event_at`（＝玄関が最後に開いた時刻）は**構造的に返らない**。SQLで取得すらしていない。
+
+### `PUT /v1/clients/:id/sensors/:sensorId`
+```json
+{ "display_name": "勝手口", "enabled": false } → { "ok": true }
+```
+`enabled=false` のセンサーからのWebhookは404になり、イベントは取り込まれない。
+
+### `DELETE /v1/clients/:id/sensors/:sensorId`
+```json
+→ { "ok": true }
+→ { "ok": true, "warning": "有効なセンサーが無くなりました。このクライアントは見守れません" }
+```
+警告は `has_app=false` のクライアントから最後の有効センサーを外した場合のみ。
+
+---
+
+## オーナープラン 🔒watcher + plan=owner
+
+無料プランは全て **402 payment_required**。
+
+- `GET /v1/owner/dashboard` — 物件別サマリ `{ properties: [{ property_tag, total, alive, watch, confirming, alert, sos }] }`
+- `GET /v1/owner/alerts.csv` — アラート履歴CSV（BOM付き・CSVインジェクション対策済み）
+- `GET /v1/owner/report` — 月次稼働レポート `{ uptime_percent, outage_minutes, clients_count, alerts_count }`
+- `PUT /v1/clients/:id/property-tag` — 物件タグ設定
+
+---
+
+## Webhook / 監視
+
+- `POST /v1/webhooks/revenuecat` — `Authorization` ヘッダ照合（定数時間比較）。未設定時は503
+- `GET /healthz` — 外形監視用（DB＋判定ジョブ。10分停止で503）
+- `GET /livez` — プロセス生存のみ。**外形監視には使わない**
+
+### `POST /v1/webhooks/switchbot` 🔓署名認証
+HMAC-SHA256（`sign` / `t` / `nonce` ヘッダ）＋5分のリプレイ窓。未設定時は503。
+```json
+{ "eventType": "changeReport",
+  "context": { "deviceMac": "AA:BB:CC:DD:EE:01", "openState": "open", "timeOfSample": 1784238000000 } }
+→ 200 { "ok": true }
+→ 200 { "ok": true, "ignored": true }   // 人の行動を示さない状態変化
+→ 401 invalid_signature / stale_signature
+→ 404 unknown_device                     // 未登録 or 無効化済み
+```
+行動とみなす条件: `openState` が `open`/`close`、`detectionState` が `DETECTED`、`powerState` が `ON`/`OFF`。
+`timeOfSample` は未来・7日超過去なら受信時刻へ丸める（時計ズレでデッドマンスイッチが止まるのを防ぐ）。
+**`meta` には行動詳細を残さない**（`openState` すら保存しない。判定に要るのは「動きがあった」事実のみ）。
+
+### `POST /v1/webhooks/power-meter` 🔓`Authorization` 照合
+電力Bルート/電力会社APIの30分値。未設定時は503。
+```json
+{ "meter_id": "METER-0001", "watt_hours": 800, "measured_at": "2026-07-17T06:00:00Z" }
+→ 200 { "ok": true }
+→ 200 { "ok": true, "ignored": true }   // 300Wh 未満（待機電力レベル）
+```
+**このソースは ALIVE 復帰を起こさない。** confidence 70 の弱シグナルとして
+`clients.last_weak_signal_at` に入り、クロス判定にのみ使われる。理由は下記。
+
+---
+
+## エラー形式
+
+```json
+{ "error": "invalid_request", "issues": [...] }   // 400（zod詳細）
+{ "error": "unauthorized" }        // 401 認証なし・無効トークン
+{ "error": "forbidden" }           // 403 ロール違い（device↔watcher）
+{ "error": "not_found" }           // 404（権限なしも404。存在有無を漏らさない）
+{ "error": "payment_required" }    // 402 課金が必要
+{ "error": "internal_error" }      // 500（詳細は返さない）
+```

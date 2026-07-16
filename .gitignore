@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+*.log
+
+# DevRelay のセッション状態・ユーザー納品物（プロダクトのソースではない）
+.devrelay/
+.devrelay-output/
+
+# 一次情報の仕様書。事業戦略を含むため公開リポジトリには置かない
+.devrelay-files/

@@ -1,0 +1,80 @@
+# systemd ユニット定義
+#
+# 【インストール手順】
+#   sudo cp deploy/mimamori-server.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now mimamori-server
+#
+# 【設計意図】
+# 見守りサービスが理由不明で停止し、そのまま放置されることが最大のリスク。
+# Restart=always により、プロセスが死んでも必ず起き上がる。
+# 起動後は判定ジョブが job_runs を更新するため、
+# 外形監視（UptimeRobot等）が /healthz 経由で復旧を確認できる。
+#
+# サーバー停止が長時間に及んだ場合、起動時に停止時間を検知して
+# 全ウォッチャーへ「監視が◯時間停止していました」を通知する
+# （黙って再開しない = 信頼の担保。spec 7）。
+
+[Unit]
+Description=mimamori-server (生存シグナル統合判定エンジン)
+Documentation=file:///home/devrelay/testflight/mimamori-server/doc/operations.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=devrelay
+Group=devrelay
+WorkingDirectory=/home/devrelay/testflight/mimamori-server
+
+# .env から環境変数を読む（DATABASE_URL / JWT_SECRET 等）
+EnvironmentFile=/home/devrelay/testflight/mimamori-server/.env
+Environment=NODE_ENV=production
+
+ExecStart=/usr/bin/node dist/index.js
+
+# --- 再起動ポリシー ---
+# 見守りが止まることは許容できないため、どんな終了理由でも必ず再起動する。
+Restart=always
+RestartSec=5
+
+# 起動失敗ループの抑制。
+# 5分間に10回以上失敗したら諦める（DBが落ちている等、再起動では直らない状況）。
+# この場合 /healthz が応答しなくなり、外部監視が管理者へエスカレーションする。
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+# --- グレースフルシャットダウン ---
+# SIGTERM を受けたらジョブを止め、進行中のリクエストを捌き切る。
+# 判定ジョブの途中で強制終了されると、状態遷移は記録されたが通知が飛んでいない
+# という中途半端な状態が残りうる。
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# --- ログ ---
+# journald へ出力。保持期間90日は journald 側の設定
+# (/etc/systemd/journald.conf の MaxRetentionSec=90day) で担保する。
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mimamori-server
+
+# --- セキュリティ強化 ---
+# 万一アプリが侵害された場合の被害範囲を最小化する。
+# このサービスは個人の安否情報と位置情報を扱うため、権限は最小に絞る。
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# アプリが書き込む必要がある場所のみ許可（現状は無し。ログはjournald経由）
+ReadWritePaths=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,317 @@
+/**
+ * ウォッチャー向け参照API。
+ *
+ * 【このファイルの最重要責務】(原則1: プライバシー最小開示)
+ * ウォッチャーに見えてよいのは「生存 / 注視 / 警告 / SOS」の4段階ステータスのみ。
+ * 位置情報・行動履歴・操作時刻・センサーの生データは一切開示しない。
+ * 唯一の例外は SOS 発動時の位置情報（本人の意思表示であるため）。
+ *
+ * この原則をコメントや慣習ではなく、zod のレスポンススキーマで機械的に強制する
+ * （spec 6: 「レスポンススキーマをzodで固定」）。
+ * DBに新しいカラムを足しても、スキーマを通らない限り漏れ出さない。
+ */
+import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
+import { query } from '../db/pool.js';
+import { audit } from '../lib/audit.js';
+import { canWatch, sendValidated } from '../lib/watcher-guard.js';
+
+/**
+ * クライアント一覧の要素スキーマ。
+ *
+ * 【変更禁止】ここにフィールドを追加する場合、それが
+ * 「見守られる本人に見られて構わない情報か」を必ず検討すること。
+ * last_alive_event_at / last_heartbeat_at を足したくなったら、それは
+ * 「最終操作時刻」の開示であり、原則1に真っ向から反する。
+ */
+const clientListItemSchema = z.object({
+  id: z.string().uuid(),
+  display_name: z.string(),
+  status: z.enum(['ALIVE', 'WATCH', 'CONFIRMING', 'ALERT', 'SOS']),
+  status_changed_at: z.date(),
+  /**
+   * 「設定に問題」表示用のフラグ。
+   * これは端末の設定状態であって本人の行動情報ではないため開示してよい。
+   */
+  has_issue: z.boolean(),
+  property_tag: z.string().nullable(),
+});
+
+const clientListSchema = z.array(clientListItemSchema);
+
+/**
+ * ステータス遷移履歴の要素スキーマ。
+ *
+ * 粒度は「遷移のみ」。「◯月◯日 注視→生存」レベルに留める（flutter spec 4.1）。
+ * 遷移の理由（threshold_minutes 等）は audit_log には残すが、
+ * ウォッチャーには返さない（生活サイクルの推測材料になるため）。
+ */
+const statusHistoryItemSchema = z.object({
+  from: z.string().nullable(),
+  to: z.string(),
+  changed_at: z.date(),
+});
+
+/**
+ * SOS詳細スキーマ。位置情報を含む唯一のレスポンス。
+ */
+const sosDetailSchema = z.object({
+  id: z.string().uuid(),
+  client_id: z.string().uuid(),
+  client_name: z.string(),
+  latitude: z.number().nullable(),
+  longitude: z.number().nullable(),
+  battery_level: z.number().nullable(),
+  fired_at: z.date(),
+  resolved_at: z.date().nullable(),
+});
+
+
+
+/**
+ * ウォッチャー向け参照ルートを登録する。
+ *
+ * @param app - fastify インスタンス
+ */
+export default async function watcherViewRoutes(app: FastifyInstance): Promise<void> {
+  /**
+   * GET /v1/clients — 見守り対象の一覧
+   *
+   * 返すのは status と status_changed_at のみ。イベントデータは絶対に返さない。
+   *
+   * has_issue の判定はサーバー側で行う（端末沈黙 = 45分以上ハートビートなし）。
+   * これは「最終操作時刻」ではなく「端末の設定/接続状態」なので開示してよい。
+   */
+  app.get('/v1/clients', { preHandler: app.requireWatcher }, async (req, reply) => {
+    const res = await query(
+      `SELECT c.id,
+              c.display_name,
+              c.status,
+              c.status_changed_at,
+              c.property_tag,
+              -- 端末沈黙の判定。閾値の生値や最終操作時刻は返さない。
+              (c.has_app AND (
+                 c.last_heartbeat_at IS NULL
+                 OR c.last_heartbeat_at < now() - interval '45 minutes'
+               )) AS has_issue
+         FROM clients c
+         JOIN watch_links l ON l.client_id = c.id
+        WHERE l.watcher_id = $1
+        ORDER BY
+          -- 緊急度の高い順に並べる。ウォッチャーが最初に見るべきものを上に。
+          CASE c.status
+            WHEN 'SOS' THEN 0
+            WHEN 'ALERT' THEN 1
+            WHEN 'CONFIRMING' THEN 2
+            WHEN 'WATCH' THEN 3
+            ELSE 4
+          END,
+          c.display_name`,
+      [req.watcherId],
+    );
+
+    return sendValidated(reply, clientListSchema, res.rows);
+  });
+
+  /**
+   * GET /v1/clients/:id/status-history — ステータス遷移履歴
+   *
+   * 粒度は遷移のみ。audit_log の status_change から再構成する。
+   */
+  app.get('/v1/clients/:id/status-history', { preHandler: app.requireWatcher }, async (req, reply) => {
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ error: 'invalid_request' });
+
+    if (!(await canWatch(req.watcherId!, params.data.id))) {
+      // 権限がない場合、存在有無を漏らさないため404を返す（403ではなく）
+      return reply.code(404).send({ error: 'not_found' });
+    }
+
+    // detail から from/to のみを取り出す。
+    // detail には threshold_minutes 等の判定内部情報も入っているが、
+    // それらは返さない（生活サイクルの推測材料になる）。
+    const res = await query(
+      `SELECT detail->>'from' AS from, detail->>'to' AS to, created_at AS changed_at
+         FROM audit_log
+        WHERE client_id = $1 AND event = 'status_change'
+        ORDER BY created_at DESC
+        LIMIT 100`,
+      [params.data.id],
+    );
+
+    return sendValidated(reply, z.array(statusHistoryItemSchema), res.rows);
+  });
+
+  /**
+   * GET /v1/sos/:id — SOS詳細（位置情報を含む）
+   *
+   * resolved後・purge後は404（flutter spec 4.2:
+   * 「SOS解決後は地図へのアクセス不可」）。
+   * 位置情報の露出時間を最小化するのが目的。
+   */
+  app.get('/v1/sos/:id', { preHandler: app.requireWatcher }, async (req, reply) => {
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ error: 'invalid_request' });
+
+    const res = await query(
+      `SELECT s.id, s.client_id, c.display_name AS client_name,
+              s.latitude, s.longitude, s.battery_level, s.fired_at, s.resolved_at
+         FROM sos_incidents s
+         JOIN clients c ON c.id = s.client_id
+         JOIN watch_links l ON l.client_id = s.client_id
+        WHERE s.id = $1
+          AND l.watcher_id = $2
+          AND s.resolved_at IS NULL
+          AND s.purge_after > now()`,
+      [params.data.id, req.watcherId],
+    );
+
+    const incident = res.rows[0];
+    if (!incident) {
+      return reply.code(404).send({ error: 'not_found', message: 'SOS情報は参照できません' });
+    }
+
+    return sendValidated(reply, sosDetailSchema, incident);
+  });
+
+  /**
+   * POST /v1/sos/:id/resolve — SOSを解決済みにする
+   *
+   * 解決すると位置情報へのアクセスが即座に不可になる。
+   * また、クライアントの状態を ALIVE へ戻す
+   * （SOSは自動復帰しない唯一の状態なので、ここでしか戻せない）。
+   */
+  app.post('/v1/sos/:id/resolve', { preHandler: app.requireWatcher }, async (req, reply) => {
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ error: 'invalid_request' });
+
+    // 誤報率KPIの算出に使う。
+    // 「無事だった」= 誤報、「実際に異常だった」= 正報として集計する（spec 9）。
+    const body = z
+      .object({ outcome: z.enum(['was_safe', 'was_real']).optional() })
+      .safeParse(req.body ?? {});
+    const outcome = body.success ? body.data.outcome : undefined;
+
+    const res = await query<{ client_id: string }>(
+      `UPDATE sos_incidents s
+          SET resolved_at = now(), resolved_by = $2
+        WHERE s.id = $1
+          AND s.resolved_at IS NULL
+          AND EXISTS (
+            SELECT 1 FROM watch_links l
+             WHERE l.client_id = s.client_id AND l.watcher_id = $2
+          )
+        RETURNING s.client_id`,
+      [params.data.id, req.watcherId],
+    );
+
+    const row = res.rows[0];
+    if (!row) return reply.code(404).send({ error: 'not_found' });
+
+    // SOS状態を解除して ALIVE へ戻す。
+    // 他にSOS中のインシデントが残っている場合は戻さない（複数SOS発動の考慮）。
+    //
+    // last_alive_event_at も now() に更新する。
+    // これがないと、SOS発動から解決までの経過時間がそのまま「無操作時間」として
+    // 残り、解決した直後に判定ジョブが CONFIRMING/ALERT を発報する。
+    const revived = await query(
+      `UPDATE clients
+          SET status = 'ALIVE',
+              status_changed_at = now(),
+              last_alive_event_at = GREATEST(last_alive_event_at, now()),
+              confirming_since = NULL,
+              last_alert_notified_at = NULL,
+              silent_push_sent_at = NULL
+        WHERE id = $1
+          AND status = 'SOS'
+          AND NOT EXISTS (
+            SELECT 1 FROM sos_incidents
+             WHERE client_id = $1 AND resolved_at IS NULL
+          )`,
+      [row.client_id],
+    );
+
+    await audit(row.client_id, 'sos_resolved', {
+      incident_id: params.data.id,
+      resolved_by: req.watcherId,
+      outcome: outcome ?? null,
+    });
+
+    // 実際に状態が戻った場合のみ遷移として記録する（履歴に載せるため）
+    if ((revived.rowCount ?? 0) > 0) {
+      await audit(row.client_id, 'status_change', {
+        from: 'SOS',
+        to: 'ALIVE',
+        reason: 'sos_resolved',
+        resolved_by: req.watcherId,
+      });
+    }
+
+    return reply.send({ ok: true });
+  });
+
+  /**
+   * POST /v1/clients/:id/resolve-alert — ALERTを解決済みにする
+   *
+   * 誤報率KPI（ALERT発報のうち「無事だった」でクローズした割合）の
+   * 計測に必要（spec 9）。この記録がないとPhase 1の合否判定ができない。
+   */
+  app.post('/v1/clients/:id/resolve-alert', { preHandler: app.requireWatcher }, async (req, reply) => {
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ error: 'invalid_request' });
+
+    const body = z.object({ outcome: z.enum(['was_safe', 'was_real']) }).safeParse(req.body);
+    if (!body.success) {
+      return reply
+        .code(400)
+        .send({ error: 'invalid_request', message: 'outcome は was_safe / was_real のいずれか' });
+    }
+
+    if (!(await canWatch(req.watcherId!, params.data.id))) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+
+    const res = await query<{ status: string }>(
+      `SELECT status FROM clients WHERE id = $1`,
+      [params.data.id],
+    );
+    const current = res.rows[0]?.status;
+    if (current !== 'ALERT') {
+      return reply.code(409).send({ error: 'not_in_alert', message: '警告状態ではありません' });
+    }
+
+    // ウォッチャーが「無事だった」と確認した場合のみ ALIVE へ戻す。
+    // 「実際に異常だった」場合は状態を維持する（対応中であることを示す）。
+    if (body.data.outcome === 'was_safe') {
+      await query(
+        `UPDATE clients
+            SET status = 'ALIVE',
+                status_changed_at = now(),
+                last_alive_event_at = now(),
+                confirming_since = NULL,
+                last_alert_notified_at = NULL,
+                silent_push_sent_at = NULL
+          WHERE id = $1 AND status = 'ALERT'`,
+        [params.data.id],
+      );
+      await audit(params.data.id, 'status_change', {
+        from: 'ALERT',
+        to: 'ALIVE',
+        reason: 'watcher_resolved_was_safe',
+        resolved_by: req.watcherId,
+        // 誤報率KPIの集計キー
+        false_alarm: true,
+      });
+    } else {
+      await audit(params.data.id, 'status_change', {
+        from: 'ALERT',
+        to: 'ALERT',
+        reason: 'watcher_confirmed_real',
+        resolved_by: req.watcherId,
+        false_alarm: false,
+      });
+    }
+
+    return reply.send({ ok: true });
+  });
+}

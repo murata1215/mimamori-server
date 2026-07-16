@@ -1,0 +1,24 @@
+{
+  // テストコードの型チェック専用設定。
+  //
+  // 【なぜ分けるのか】
+  // 本体の tsconfig.json は rootDir: "src" / outDir: "dist" のビルド設定であり、
+  // tests/ を含められない。結果としてテストが型チェックされない状態になっていた。
+  //
+  // 【なぜそれが危険か】
+  // 判定エンジンの入力型（EvaluationInput）にフィールドを追加しても、
+  // テストは undefined を渡したまま「通ってしまう」。
+  // 命に関わる判定ロジックのテストが、本番の型と乖離したまま緑になるのは、
+  // テストがあること自体が誤った安心になる。
+  // 実際 Phase 2 で lastWeakSignalAt を追加した際にこれが起きた。
+  //
+  // ビルド成果物は出さない（noEmit）。CI・ローカルの検証専用。
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}
