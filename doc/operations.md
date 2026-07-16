@@ -6,8 +6,27 @@
 npm run migrate        # マイグレーション（冪等。未適用のみ適用）
 npm run dev            # 開発（tsx watch）
 npm run build && npm start   # 本番相当
+```
 
-# systemd 運用
+### 現在の本番運用: pm2（sudo 不可の testflight 環境）
+
+このマシンでは root 権限が無く systemd を使えないため、他サービスと同じく **pm2** で常時稼働させている。
+
+```bash
+npm run build          # dist/ を最新化してから
+NODE_ENV=production pm2 start dist/index.js --name mimamori-server --time
+pm2 save               # マシン再起動時の復元リストへ登録
+pm2 logs mimamori-server   # ログ確認
+pm2 restart mimamori-server   # コード更新後（build 後）に反映
+```
+
+- `.env` は cwd（プロジェクトルート）から dotenv が読むため、pm2 起動時も追加設定は不要。
+- **コード変更を反映するには `npm run build` → `pm2 restart mimamori-server` が必要**（pm2 は dist/ を実行するため、tsx watch のような自動反映はされない）。
+- Restart ポリシー（プロセス死亡時の自動復帰）は pm2 が担う。systemd の `Restart=always` 相当。
+
+### systemd 運用（sudo 取得後の理想形。未使用）
+
+```bash
 sudo cp deploy/mimamori-server.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now mimamori-server

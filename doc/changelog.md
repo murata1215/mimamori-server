@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-07-17 — ルートURLで案内ページを返すよう変更
+
+本番起動後、ブラウザで https://mimamori-server.devrelay.io/ を開くと
+`{"error":"not_found"}` が表示される（`GET /` ルートが無いため not-found ハンドラが応答）。
+API としては正常だが「壊れている」と誤解されるため、案内ページを返すようにした。
+
+- `GET /` — `placeholder/index.html` を `text/html` で返す（`src/routes/health.ts`）。
+  起動時に一度だけ読み込み、ファイルが無ければインライン HTML にフォールバック。
+  静的配信プラグインは導入しない（1ページのみのため過剰）。
+- `GET /favicon.ico` — 204 を返す（ブラウザアクセス時の 404 ログノイズ防止）。
+- `placeholder/index.html` の文言を「Under Construction」から
+  「見守りサービス API サーバーです」に更新。このファイルは Caddy フォールバック
+  （バックエンド停止時）とも共用のため、稼働状態を断定しない中立な文言とした。
+- API のルート・エラー形式・not-found ハンドラは一切変更なし。
+
+## 2026-07-17 — 本番起動（pm2 で常時稼働化）
+
+Flutter クライアントの実機テスト開始に伴い、未起動だったバックエンドを起動した。
+
+- **pm2 で常時稼働**（プロセス名 `mimamori-server`、`NODE_ENV=production`、`pm2 save` 済み）。
+  このマシンは sudo 不可で systemd を使えないため、他サービスと同じ pm2 方式を採用。
+  `deploy/mimamori-server.service` は sudo 取得後の理想形として残置。
+- `npm run build` で dist を最新化してから起動。判定ジョブ5個が稼働、`/healthz` は 200 `ok`。
+- **FCM は no-op ドライバで起動している**（`.env` の `FIREBASE_CREDENTIALS_PATH` が
+  コメントアウトのまま）。API・判定エンジンは全機能動作するが、**プッシュ通知は実際には
+  送信されない**。実機へのテスト push・本番通知には Firebase 認証情報の設定が必須。
+- Twilio（ownerプランSMS）も未設定のため SMS フォールバックは無効。
+- 運用手順は `doc/operations.md`「現在の本番運用: pm2」を参照。
+
 ## 2026-07-17 — FCM data payload に `client_name` 追加（Flutter連携）
 
 mimamori-flutter チームとの API 突き合わせによる依頼2点への対応。
