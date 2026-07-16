@@ -9,6 +9,7 @@
  * - sos_purge     : 日次。位置情報の物理削除（30日経過分）。
  * - partition     : 日次。events の月次パーティション先行作成。
  * - kpi_summary   : 日次。Phase 1 の合否判定データを集計。
+ * - provision_cleanup : 毎時。期限切れ provision の物理削除。
  *
  * 【多重実行の防止】
  * 判定ジョブが1分以内に終わらない場合、次の実行が重なる。
@@ -279,6 +280,21 @@ export async function startScheduler(): Promise<void> {
     ),
   );
 
+  // --- provision クリーンアップ: 毎時 ---
+  tasks.push(
+    cron.schedule(
+      '30 * * * *',
+      async () => {
+        try {
+          await cleanupProvisions();
+        } catch (err) {
+          console.error('[scheduler] provision クリーンアップに失敗しました:', err);
+        }
+      },
+      { timezone: SERVICE_TIMEZONE },
+    ),
+  );
+
   // 起動直後に判定を1回走らせる。
   // 次の分境界まで待つと、最大60秒間 job_runs が空のままになり
   // /healthz が 'never_ran' を返しうる。
@@ -298,5 +314,25 @@ export async function stopScheduler(): Promise<void> {
   console.log('[scheduler] 全ジョブを停止しました');
 }
 
+/**
+ * 期限切れの provision を物理削除する（毎時）。
+ *
+ * provision は認証なしで作成できるため、claim されずに放置されたレコードが蓄積する。
+ * 有効期限 + 1時間（ポーリングのラグ猶予）を過ぎたものを削除する。
+ * claimed 済みのレコードも一定期間（7日）後に削除する（device_token は発行済みのため不要）。
+ */
+async function cleanupProvisions(): Promise<number> {
+  const res = await query(
+    `DELETE FROM provisions
+     WHERE (claimed_at IS NULL AND expires_at < now() - interval '1 hour')
+        OR (claimed_at IS NOT NULL AND claimed_at < now() - interval '7 days')`,
+  );
+  const deleted = res.rowCount ?? 0;
+  if (deleted > 0) {
+    console.log(`[scheduler] 期限切れ provision を${deleted}件削除しました`);
+  }
+  return deleted;
+}
+
 // テスト・運用スクリプトから個別に呼べるように公開する
-export { purgeSosLocations, summarizeKpi, detectAndReportOutage };
+export { purgeSosLocations, summarizeKpi, detectAndReportOutage, cleanupProvisions };

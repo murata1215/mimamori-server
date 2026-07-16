@@ -68,6 +68,45 @@ Base URL: `https://mimamori-server.devrelay.io`
 → 400 invalid_code   // 無効・期限切れ・使用済み
 ```
 
+### `POST /v1/provisions` 🔓認証不要（IP レート制限: 10回/時）
+逆方向ペアリング: 高齢者端末が自己登録し QR を表示 → ウォッチャーがスキャン。
+**`consent_version` は必須**（法務要件: 本人端末から受け取る）。
+clients / devices / watch_links には一切書き込まない（provisions テーブルのみ）。
+```json
+{ "platform": "android", "consent_version": "v1.0",
+  "app_version": "0.1.0", "fcm_token": "..." }
+→ 201 {
+    "provision_id": "uuid",
+    "claim_code": "base64url-32bytes...",     // QR 用の長いランダム文字列
+    "fallback_code": "123456",                // 手入力用6桁
+    "claim_secret": "base64url-32bytes...",    // ポーリング認証用（claim_code とは別値）
+    "expires_in_minutes": 30
+  }
+→ 400 invalid_request
+→ 429 rate_limit
+```
+
+### `GET /v1/provisions/me` 🔒claim_secret（`Authorization: Bearer <claim_secret>`）
+ポーリング（3〜5秒間隔）。claim されるまで `{ "claimed": false }` を返す。
+claim 後は正式な device_token を返す。**JWT ではなく provision 時に受け取った claim_secret を Bearer で送る。**
+```json
+→ 200 { "claimed": false }
+→ 200 { "claimed": true, "device_token": "jwt...", "client_id": "uuid" }
+→ 401 unauthorized          // claim_secret がない
+→ 404 not_found / expired   // 存在しない or 期限切れ
+```
+
+### `POST /v1/clients/claim` 🔒watcher
+ウォッチャーが provision を自分の見守り対象として登録。`code` は `claim_code`（QR）と `fallback_code`（6桁）のどちらも受け付ける。
+```json
+{ "code": "claim_code or fallback_code", "display_name": "おばあちゃん",
+  "usage_frequency": "occasional" }
+→ 201 { "client_id": "uuid" }
+→ 400 invalid_code           // 無効 or 期限切れ
+→ 402 payment_required       // 無料枠(2人)超過
+→ 409 already_claimed        // 使用済み
+```
+
 ---
 
 ## クライアント端末 🔒device

@@ -13,6 +13,7 @@ import deviceRoutes from './routes/device.js';
 import healthRoutes from './routes/health.js';
 import ownerRoutes from './routes/owner.js';
 import pairingRoutes from './routes/pairing.js';
+import provisionRoutes from './routes/provision.js';
 import sensorRoutes from './routes/sensors.js';
 import watcherRoutes from './routes/watchers.js';
 import watcherViewRoutes from './routes/watcher-views.js';
@@ -81,6 +82,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(healthRoutes);
   await app.register(watcherRoutes);
   await app.register(pairingRoutes);
+  await app.register(provisionRoutes);
   await app.register(deviceRoutes);
   await app.register(watcherViewRoutes);
   await app.register(ownerRoutes);

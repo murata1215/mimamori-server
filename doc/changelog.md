@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-07-17 — 逆方向ペアリング（provision → poll → claim）
+
+見守られる側は高齢者。操作を極限まで減らすため、ペアリングの方向を逆転した。
+
+- 旧フロー: ウォッチャーがコード発行 → 高齢者端末でコード入力 + 名前入力（操作が多い）
+- **新フロー**: 高齢者はアプリ起動 + 同意タップ → 端末が自動で QR 表示 → ウォッチャーが
+  スキャンして名前入力（高齢者の操作は「同意ボタンを押す」のみ）
+
+### 新規エンドポイント
+
+- `POST /v1/provisions` 🔓認証不要（IP 10回/時のレート制限）
+  端末の自己登録。`consent_version`（法務要件: 本人端末から受け取る）と `platform` が必須。
+  `claim_code`（QR用長random）+ `fallback_code`（手入力用6桁）+ `claim_secret`（ポーリング認証用、
+  claim_code とは別値）を返す。TTL 30分。**clients / devices / watch_links には一切書き込まない**
+  （provisions テーブルのみ。claim されなければ期限切れで消える）。
+- `GET /v1/provisions/me` 🔒claim_secret（`Authorization: Bearer <claim_secret>`）
+  端末が3〜5秒間隔でポーリング。claim 前は `{claimed:false}`、claim 後は正式な `device_token`
+  と `client_id` を返す。JWT ではなく平文シークレットを Bearer で送る。
+- `POST /v1/clients/claim` 🔒watcher
+  ウォッチャーが provision を自分の見守り対象として登録。`code` は `claim_code` と `fallback_code`
+  のどちらも受け付ける。client + device + watch_link を1トランザクションで作成。
+  監査ログに consent_version を記録（法務証跡）。
+
+### 実装の詳細
+
+- `provisions` テーブル（004_provisions.sql）: claim前は clients/devices に触れない設計。
+  claim されなかった provision は毎時のクリーンアップジョブ（scheduler）で物理削除。
+- 既存のデバイストークン構造（`DeviceTokenPayload{role:'device', sub:client_id, device_id}`）は
+  **変更なし**。provision 時にはデバイストークンを発行せず、claim 完了後にポーリング経由で渡す。
+- 旧フロー（`pairing-codes` / `clients/pair`）はそのまま共存。後方互換を維持。
+- 判定エンジン・状態遷移・通知は無改修。
+
 ## 2026-07-17 — 公開ステータスページ（`GET /` / `GET /statusz`）
 
 ルートURLを、ログイン不要で稼働状況と利用者数がわかる公開ステータスページにした。
