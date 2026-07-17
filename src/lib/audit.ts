@@ -21,6 +21,7 @@ export type AuditEvent =
   | 'sos_resolved'         // SOS解決
   | 'client_paired'        // ペアリング完了（同意記録を含む）
   | 'client_claimed'       // 逆方向ペアリング（provision → claim）完了
+  | 'watcher_joined'       // 追加ウォッチャーの招待 join（多対多）
   | 'permission_health'    // 権限失効の申告
   | 'threshold_learned'    // 閾値の学習更新
   | 'silent_push_sent'     // 端末を起こしにいく silent push

@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-07-17 — 追加ウォッチャー招待（多対多ペアリング）
+
+既存クライアントに2人目・3人目のウォッチャーを紐づけるフローを追加。
+新規 client/device は作らず watch_link のみ作成する。
+
+- `invite_codes` テーブル（006_invite_codes.sql）: provision とは分離。
+  `invite_code`（QR用long random）+ `fallback_code`（6桁手入力）。TTL 30分。
+- `POST /v1/invite-codes` 🔒device: 招待コード発行（10回/時レート制限）
+- `GET /v1/invite-codes/:invite_id` 🔒device: join 状態ポーリング（`{joined, watcher_name?}`）
+- `POST /v1/clients/join` 🔒watcher: watch_link のみ作成。無料枠チェック適用。
+  既に紐づき済みなら 409 `already_joined`、コード消費済みなら 409 `already_used`
+- `GET /v1/clients/me/watchers` 🔒device: 紐づきウォッチャーの名前一覧（`display_name` のみ。最小開示）
+- 毎時クリーンアップ（provision と同タイミング）
+- 判定エンジン・通知配信は既に多対多対応済み（`getWatchersFor` で全 watcher に配信）のため無改修
+
 ## 2026-07-17 — スタンプ機能（双方向の軽量コミュニケーション）
 
 クライアント（見守られる側）とウォッチャー（見守る側）でスタンプを双方向にやり取りする機能。

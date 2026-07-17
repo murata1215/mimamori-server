@@ -11,6 +11,7 @@ import jwtAuth from './auth/jwt.js';
 import { config } from './config.js';
 import deviceRoutes from './routes/device.js';
 import healthRoutes from './routes/health.js';
+import inviteRoutes from './routes/invite.js';
 import ownerRoutes from './routes/owner.js';
 import pairingRoutes from './routes/pairing.js';
 import provisionRoutes from './routes/provision.js';
@@ -84,6 +85,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(watcherRoutes);
   await app.register(pairingRoutes);
   await app.register(provisionRoutes);
+  await app.register(inviteRoutes);
   await app.register(deviceRoutes);
   await app.register(watcherViewRoutes);
   await app.register(ownerRoutes);

@@ -10,6 +10,7 @@
  * - partition     : 日次。events の月次パーティション先行作成。
  * - kpi_summary   : 日次。Phase 1 の合否判定データを集計。
  * - provision_cleanup : 毎時。期限切れ provision の物理削除。
+ * - invite_cleanup    : 毎時。期限切れ invite_codes の物理削除。
  * - stamp_cleanup     : 日次。90日経過スタンプの物理削除。
  *
  * 【多重実行の防止】
@@ -311,6 +312,21 @@ export async function startScheduler(): Promise<void> {
     ),
   );
 
+  // --- invite_codes クリーンアップ: 毎時（provision と同タイミング） ---
+  tasks.push(
+    cron.schedule(
+      '30 * * * *',
+      async () => {
+        try {
+          await cleanupInviteCodes();
+        } catch (err) {
+          console.error('[scheduler] invite_codes クリーンアップに失敗しました:', err);
+        }
+      },
+      { timezone: SERVICE_TIMEZONE },
+    ),
+  );
+
   // 起動直後に判定を1回走らせる。
   // 次の分境界まで待つと、最大60秒間 job_runs が空のままになり
   // /healthz が 'never_ran' を返しうる。
@@ -366,5 +382,22 @@ async function cleanupStamps(): Promise<number> {
   return deleted;
 }
 
+/**
+ * 期限切れの invite_codes を物理削除する（毎時）。
+ * provision と同じポリシー: 未使用は期限+1時間、使用済みは7日後に削除。
+ */
+async function cleanupInviteCodes(): Promise<number> {
+  const res = await query(
+    `DELETE FROM invite_codes
+     WHERE (joined_at IS NULL AND expires_at < now() - interval '1 hour')
+        OR (joined_at IS NOT NULL AND joined_at < now() - interval '7 days')`,
+  );
+  const deleted = res.rowCount ?? 0;
+  if (deleted > 0) {
+    console.log(`[scheduler] 期限切れ invite_codes を${deleted}件削除しました`);
+  }
+  return deleted;
+}
+
 // テスト・運用スクリプトから個別に呼べるように公開する
-export { purgeSosLocations, summarizeKpi, detectAndReportOutage, cleanupProvisions, cleanupStamps };
+export { purgeSosLocations, summarizeKpi, detectAndReportOutage, cleanupProvisions, cleanupStamps, cleanupInviteCodes };
