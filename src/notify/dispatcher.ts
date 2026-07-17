@@ -410,3 +410,54 @@ export async function notifyServiceOutage(gapMinutes: number): Promise<void> {
 
   await audit(null, 'service_outage', { gap_minutes: gapMinutes, notified: res.rows.length });
 }
+
+/**
+ * クライアントからのスタンプを全ウォッチャーへ通知する。
+ *
+ * @param clientId - クライアントID
+ * @param stamp - スタンプコード（'fine', 'not_well', 'bad' 等）
+ * @param clientName - クライアントの表示名
+ */
+export async function notifyStampToWatchers(
+  clientId: string,
+  stamp: string,
+  clientName: string,
+): Promise<void> {
+  const watchers = await getWatchersFor(clientId);
+  for (const w of watchers) {
+    await pushToWatcher(clientId, w, 'stamp', 'スタンプ', `${clientName}さんからスタンプが届きました`, {
+      stamp,
+      client_name: clientName,
+      direction: 'from_client',
+    });
+  }
+}
+
+/**
+ * ウォッチャーからのスタンプをクライアントの全デバイスへ通知する。
+ *
+ * @param clientId - クライアントID
+ * @param stamp - スタンプコード
+ * @param senderName - ウォッチャーの表示名
+ */
+export async function notifyStampToClient(
+  clientId: string,
+  stamp: string,
+  senderName: string,
+): Promise<void> {
+  const devices = await query<{ id: string; fcm_token: string | null }>(
+    'SELECT id, fcm_token FROM devices WHERE client_id = $1 AND fcm_token IS NOT NULL',
+    [clientId],
+  );
+
+  for (const d of devices.rows) {
+    const result = await sendWithRetry({
+      token: d.fcm_token!,
+      kind: 'stamp',
+      title: 'スタンプ',
+      body: `${senderName}さんからスタンプが届きました`,
+      data: { stamp, sender_name: senderName, direction: 'from_watcher' },
+    });
+    if (result.invalidToken) await clearInvalidToken('devices', d.id);
+  }
+}

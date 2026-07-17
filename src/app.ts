@@ -15,6 +15,7 @@ import ownerRoutes from './routes/owner.js';
 import pairingRoutes from './routes/pairing.js';
 import provisionRoutes from './routes/provision.js';
 import sensorRoutes from './routes/sensors.js';
+import stampRoutes from './routes/stamps.js';
 import watcherRoutes from './routes/watchers.js';
 import watcherViewRoutes from './routes/watcher-views.js';
 import webhookRoutes from './routes/webhooks.js';
@@ -88,6 +89,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(ownerRoutes);
   // Phase 2: センサー管理（SwitchBot・電力メーターの紐づけ、センサーのみクライアント）
   await app.register(sensorRoutes);
+  await app.register(stampRoutes);
   await app.register(webhookRoutes);
 
   // --- エラーハンドラ ---

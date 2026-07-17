@@ -10,6 +10,7 @@
  * - partition     : 日次。events の月次パーティション先行作成。
  * - kpi_summary   : 日次。Phase 1 の合否判定データを集計。
  * - provision_cleanup : 毎時。期限切れ provision の物理削除。
+ * - stamp_cleanup     : 日次。90日経過スタンプの物理削除。
  *
  * 【多重実行の防止】
  * 判定ジョブが1分以内に終わらない場合、次の実行が重なる。
@@ -280,6 +281,21 @@ export async function startScheduler(): Promise<void> {
     ),
   );
 
+  // --- スタンプクリーンアップ: 毎日 深夜4時30分 ---
+  tasks.push(
+    cron.schedule(
+      '30 4 * * *',
+      async () => {
+        try {
+          await cleanupStamps();
+        } catch (err) {
+          console.error('[scheduler] スタンプクリーンアップに失敗しました:', err);
+        }
+      },
+      { timezone: SERVICE_TIMEZONE },
+    ),
+  );
+
   // --- provision クリーンアップ: 毎時 ---
   tasks.push(
     cron.schedule(
@@ -334,5 +350,21 @@ async function cleanupProvisions(): Promise<number> {
   return deleted;
 }
 
+/**
+ * 90日経過したスタンプを物理削除する（日次）。
+ *
+ * スタンプは軽い近況報告であり、長期保存の価値は低い。
+ */
+async function cleanupStamps(): Promise<number> {
+  const res = await query(
+    `DELETE FROM stamps WHERE created_at < now() - interval '90 days'`,
+  );
+  const deleted = res.rowCount ?? 0;
+  if (deleted > 0) {
+    console.log(`[scheduler] 90日経過スタンプを${deleted}件削除しました`);
+  }
+  return deleted;
+}
+
 // テスト・運用スクリプトから個別に呼べるように公開する
-export { purgeSosLocations, summarizeKpi, detectAndReportOutage, cleanupProvisions };
+export { purgeSosLocations, summarizeKpi, detectAndReportOutage, cleanupProvisions, cleanupStamps };

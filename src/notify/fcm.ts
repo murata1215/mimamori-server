@@ -19,7 +19,8 @@ export type PushKind =
   | 'sos'             // ウォッチャーへ: 最強通知＋位置情報画面
   | 'permission'      // ウォッチャーへ: 「設定に問題」
   | 'outage'          // ウォッチャーへ: 監視停止のお知らせ
-  | 'silent';         // クライアントへ: data-only。端末を起こしてハートビートを促す
+  | 'silent'          // クライアントへ: data-only。端末を起こしてハートビートを促す
+  | 'stamp';          // 双方向: スタンプ送受信
 
 /** 送信リクエスト */
 export interface PushRequest {

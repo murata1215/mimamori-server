@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-07-17 — スタンプ機能（双方向の軽量コミュニケーション）
+
+クライアント（見守られる側）とウォッチャー（見守る側）でスタンプを双方向にやり取りする機能。
+テキストメッセージなし、スタンプのみ。初期セットは `fine` / `not_well` / `bad` の3種。
+`stamp` カラムは text（enum にしない）のため、種類追加にスキーマ変更不要。
+
+- `stamps` テーブル（005_stamps.sql）: `direction`（`from_client` / `from_watcher`）で方向を識別。
+  `sender_name` は送信時点の display_name をスナップショット保存（名前変更後も正確）。
+- `POST /v1/stamps` 🔒device: クライアント→全ウォッチャー宛送信（30回/時レート制限）
+- `POST /v1/clients/:client_id/stamps` 🔒watcher: ウォッチャー→クライアント宛送信
+- `GET /v1/stamps/me` 🔒device: クライアントの送受信履歴（cursor ページネーション `before_id`）
+- `GET /v1/clients/:client_id/stamps` 🔒watcher: ウォッチャー閲覧（watch_link なし→404）
+- FCM `kind: 'stamp'`: ウォッチャー宛は `stamp` + `client_name` + `direction`、
+  クライアント宛は `stamp` + `sender_name` + `direction` を data に載せる
+- 90日経過分は日次クリーンアップ（scheduler で深夜4:30）で物理削除
+- 既読管理はサーバー側では行わない（Flutter 側で `last_seen_at` をローカル管理）
+- 判定エンジン・状態遷移・既存通知は一切無改修
+
 ## 2026-07-17 — 逆方向ペアリング（provision → poll → claim）
 
 見守られる側は高齢者。操作を極限まで減らすため、ペアリングの方向を逆転した。
