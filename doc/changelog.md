@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-07-17 — 匿名ウォッチャー登録（ログイン不要化）
+
+ウォッチャーの登録障壁を下げるため、メール+パスワードなしでの端末登録を可能にした。
+
+- マイグレーション（007_anonymous_watchers.sql）: `watchers.email` と `password_hash` を NULL 可に変更、
+  `install_id text UNIQUE` を追加。PostgreSQL の UNIQUE は NULL 同士で衝突しないため既存の email UNIQUE 制約は維持。
+- `POST /v1/watchers/register-device` 🔓認証不要（IP 10回/時）: `install_id` + `display_name` + `platform` で
+  匿名ウォッチャーを作成。同一 `install_id` で再呼び出しすると既存 watcher のトークンを再発行（新規 201 / 既存 200）。
+  `email` / `password_hash` は NULL のまま。
+- `POST /v1/watchers/me/email` 🔒watcher: 匿名アカウントにメール+パスワードを付与（機種変更時の復元等）。
+  既にメール登録済みなら 409 `already_registered`、メール重複なら 409 `email_taken`。
+- `PATCH /v1/watchers/me` 🔒watcher: `display_name` の変更用。既存の `PUT /v1/watchers/me/settings` とは分離。
+- 既存のメール登録（`POST /v1/watchers`）・ログイン・リフレッシュは無変更。
+  `password_hash` が NULL の watcher にログインすると `verifyPassword` がダミーハッシュにフォールバックして自然に失敗。
+- `GET /v1/watchers/me` が `email: null` を返せるようになった（Flutter で「メール未登録」判定用）。
+- `checkClientQuota` / `issueWatcherTokens` / `requireWatcher` / RevenueCat webhook への影響なし。
+
 ## 2026-07-17 — 追加ウォッチャー招待（多対多ペアリング）
 
 既存クライアントに2人目・3人目のウォッチャーを紐づけるフローを追加。

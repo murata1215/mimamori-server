@@ -14,7 +14,17 @@ Base URL: `https://mimamori-server.devrelay.io`
 
 ## 認証・ペアリング
 
-### `POST /v1/watchers` — ウォッチャー登録
+### `POST /v1/watchers/register-device` 🔓認証不要（IP 10回/時）
+匿名端末登録。メール+パスワードなしでウォッチャーアカウントを作成。
+同一 `install_id` で再呼び出しすると既存 watcher のトークンを再発行（冪等）。
+```json
+{ "install_id": "uuid-v4", "display_name": "太郎", "platform": "android" }
+→ 201 { "watcher_id": "...", "access_token": "...", "refresh_token": "..." }  // 新規
+→ 200 { "watcher_id": "...", "access_token": "...", "refresh_token": "..." }  // 既存
+→ 400 invalid_request / 429 rate_limit
+```
+
+### `POST /v1/watchers` — ウォッチャー登録（メール+パスワード）
 ```json
 { "display_name": "けいすけ", "email": "a@example.com", "password": "8文字以上" }
 → 201 { "watcher_id": "...", "access_token": "...", "refresh_token": "..." }
@@ -47,6 +57,21 @@ Base URL: `https://mimamori-server.devrelay.io`
 ### `PUT /v1/watchers/me/settings` 🔒watcher
 ```json
 { "notify_watch": true, "phone_number": "+8190..." } → { "ok": true }
+```
+
+### `PATCH /v1/watchers/me` 🔒watcher — プロフィール更新
+```json
+{ "display_name": "新しい名前" } → 200 { "ok": true }
+→ 400 invalid_request
+```
+
+### `POST /v1/watchers/me/email` 🔒watcher — 匿名→メール登録
+匿名ウォッチャーにメール+パスワードを追加。機種変更時の復元等に。
+```json
+{ "email": "a@example.com", "password": "8文字以上" }
+→ 200 { "ok": true }
+→ 409 email_taken          // メール重複
+→ 409 already_registered   // 既にメール登録済み
 ```
 
 ### `POST /v1/pairing-codes` 🔒watcher

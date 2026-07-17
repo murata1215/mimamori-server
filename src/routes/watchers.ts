@@ -39,6 +39,24 @@ const refreshSchema = z.object({
   refresh_token: z.string().min(1),
 });
 
+/** 匿名端末登録リクエスト */
+const registerDeviceSchema = z.object({
+  install_id: z.string().min(1).max(200),
+  display_name: z.string().min(1).max(100),
+  platform: z.string().min(1).max(50),
+});
+
+/** メール登録（匿名→メール）リクエスト */
+const addEmailSchema = z.object({
+  email: z.string().email().max(255),
+  password: z.string().min(8).max(200),
+});
+
+/** プロフィール更新リクエスト */
+const patchProfileSchema = z.object({
+  display_name: z.string().min(1).max(100),
+});
+
 /**
  * ウォッチャー関連ルートを登録する。
  *
@@ -205,4 +223,130 @@ export default async function watcherRoutes(app: FastifyInstance): Promise<void>
     );
     return reply.send({ ok: true });
   });
+
+  /**
+   * POST /v1/watchers/register-device — 匿名端末登録（認証不要）
+   *
+   * メール+パスワードなしでウォッチャーアカウントを作成する。
+   * install_id（アプリ生成UUID）で端末を識別し、同一 install_id なら既存 watcher の
+   * トークンを再発行する（冪等）。
+   *
+   * 新規: 201、既存 install_id: 200
+   */
+  app.post(
+    '/v1/watchers/register-device',
+    {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: '1 hour',
+          keyGenerator: (req) => req.ip,
+        },
+      },
+    },
+    async (req, reply) => {
+      const parsed = registerDeviceSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_request', issues: parsed.error.issues });
+      }
+      const { install_id, display_name, platform } = parsed.data;
+
+      // 同一 install_id の既存ウォッチャーを検索
+      const existing = await query<{ id: string }>(
+        'SELECT id FROM watchers WHERE install_id = $1',
+        [install_id],
+      );
+
+      if (existing.rows.length > 0) {
+        // 既存: トークンのみ再発行（display_name / platform は更新しない）
+        const watcherId = existing.rows[0]!.id;
+        const tokens = issueWatcherTokens(app, watcherId);
+        return reply.code(200).send({ watcher_id: watcherId, ...tokens });
+      }
+
+      // 新規: email / password_hash は NULL のまま作成
+      const res = await query<{ id: string }>(
+        `INSERT INTO watchers (display_name, install_id)
+         VALUES ($1, $2) RETURNING id`,
+        [display_name, install_id],
+      );
+      const watcherId = res.rows[0]!.id;
+      const tokens = issueWatcherTokens(app, watcherId);
+      return reply.code(201).send({ watcher_id: watcherId, ...tokens });
+    },
+  );
+
+  /**
+   * POST /v1/watchers/me/email — 匿名→メール登録
+   *
+   * 匿名ウォッチャーにメール+パスワードを付与する。
+   * 機種変更時の復元、複数端末ログイン、有料プラン購入の領収書送付等の用途。
+   * 既にメール登録済みなら 409 already_registered。
+   */
+  app.post(
+    '/v1/watchers/me/email',
+    { preHandler: app.requireWatcher },
+    async (req, reply) => {
+      const parsed = addEmailSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_request', issues: parsed.error.issues });
+      }
+      const { email, password } = parsed.data;
+      const watcherId = req.watcherId!;
+
+      // 既にメール登録済みかチェック
+      const me = await query<{ email: string | null }>(
+        'SELECT email FROM watchers WHERE id = $1',
+        [watcherId],
+      );
+      if (me.rows[0]?.email) {
+        return reply.code(409).send({
+          error: 'already_registered',
+          message: '既にメールアドレスが登録されています',
+        });
+      }
+
+      const normalizedEmail = email.toLowerCase().trim();
+      const password_hash = await hashPassword(password);
+
+      try {
+        await query(
+          'UPDATE watchers SET email = $2, password_hash = $3 WHERE id = $1',
+          [watcherId, normalizedEmail, password_hash],
+        );
+        return reply.send({ ok: true });
+      } catch (err) {
+        if ((err as { code?: string }).code === '23505') {
+          return reply.code(409).send({
+            error: 'email_taken',
+            message: 'このメールアドレスは他のアカウントで使用されています',
+          });
+        }
+        throw err;
+      }
+    },
+  );
+
+  /**
+   * PATCH /v1/watchers/me — プロフィール更新
+   *
+   * display_name の変更用。既存の PUT /v1/watchers/me/settings とは分離する。
+   */
+  app.patch(
+    '/v1/watchers/me',
+    { preHandler: app.requireWatcher },
+    async (req, reply) => {
+      const parsed = patchProfileSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_request', issues: parsed.error.issues });
+      }
+      const { display_name } = parsed.data;
+
+      await query('UPDATE watchers SET display_name = $2 WHERE id = $1', [
+        req.watcherId,
+        display_name,
+      ]);
+      return reply.send({ ok: true });
+    },
+  );
 }
