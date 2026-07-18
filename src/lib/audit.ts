@@ -33,7 +33,9 @@ export type AuditEvent =
   // 監視していたことを証明できない。
   | 'sensor_registered'    // センサーの登録
   | 'sensor_updated'       // センサーの有効/無効の切り替え
-  | 'sensor_removed';      // センサーの登録解除
+  | 'sensor_removed'       // センサーの登録解除
+  // --- 機種変更対応 ---
+  | 'client_device_login'; // クライアント端末のメールログイン（機種変更）
 
 /**
  * 監査ログを1件記録する。

@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-07-18 — クライアント機種変更対応
+
+クライアント（見守られ側）にもメール認証を追加し、機種変更時に再ペアリング不要にした。
+
+- マイグレーション（008_client_auth.sql）: `clients.email text UNIQUE` / `clients.password_hash text` を追加（NULL可）。
+  `devices.deactivated_at timestamptz` を追加し `idx_devices_active` 部分インデックスを作成。
+- `POST /v1/clients/me/email` 🔒device: デバイストークン認証でメール+パスワード付与。
+  409 `already_registered` / 409 `email_taken`。watchers と clients で同一メール登録可能。
+- `POST /v1/clients/login` 🔓認証不要（IP 10回/時）: メール+パスワードで認証 → 旧デバイス全無効化
+  （`deactivated_at = now()`）→ 新デバイス INSERT → `consent_version` / `consent_at` 更新 →
+  device JWT 発行 → `audit_log` に `client_device_login` 記録。
+- `requireDevice` にデバイス有効性チェックを追加: `SELECT 1 FROM devices WHERE id = $1 AND deactivated_at IS NULL`。
+  0行なら 401 `device_deactivated`。旧端末のJWTは即座に無効化され、confirm_alive 誤復帰・
+  screen_on_count による生存イベント汚染を防ぐ。
+- 判定エンジン・状態遷移・通知は無改修。watch_links は client_id 紐づけなので自動継続。
+
+### 旧端末無効化の設計根拠
+旧端末を無効化しないと:
+- confirm_alive が旧端末から応答され ALIVE に誤復帰する（絶対ルール1「判定はサーバー側」違反）
+- 旧端末を他人が操作すると screen_on_count>0 が生存イベント扱いされ、本人の死亡を見逃す
+- last_heartbeat_at が更新され続け、端末沈黙検出が機能しない
+
+物理削除ではなく論理削除（deactivated_at）にしたのは、audit_log との突き合わせで
+「いつ・どのデバイスが有効だったか」を追跡するため。
+
 ## 2026-07-17 — 匿名ウォッチャー登録（ログイン不要化）
 
 ウォッチャーの登録障壁を下げるため、メール+パスワードなしでの端末登録を可能にした。

@@ -13,6 +13,7 @@ import fastifyJwt from '@fastify/jwt';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import { config } from '../config.js';
+import { query as dbQuery } from '../db/pool.js';
 
 /** ウォッチャー用トークンのペイロード */
 export interface WatcherTokenPayload {
@@ -85,6 +86,15 @@ async function jwtPlugin(app: FastifyInstance): Promise<void> {
 
   /**
    * クライアント端末ガード。
+   *
+   * JWT 検証に加え、デバイスが無効化されていないことを確認する。
+   * 機種変更で login した際に旧デバイスは deactivated_at が設定されるため、
+   * 旧端末のJWTは即座に無効になる。
+   *
+   * 【なぜ DB 参照が必要か】
+   * JWT は取り消せない（ステートレス）。旧端末が confirm_alive を送ると
+   * ALIVE 誤復帰し、死亡を見逃す（絶対ルール1違反）。
+   * 1クエリの追加コストより correctness を優先する。
    */
   app.decorate('requireDevice', async (req: FastifyRequest, reply: FastifyReply) => {
     try {
@@ -92,6 +102,19 @@ async function jwtPlugin(app: FastifyInstance): Promise<void> {
       if (payload.role !== 'device') {
         return reply.code(403).send({ error: 'forbidden', message: 'デバイス権限が必要です' });
       }
+
+      // デバイスが無効化されていないことを確認
+      const active = await dbQuery(
+        'SELECT 1 FROM devices WHERE id = $1 AND deactivated_at IS NULL',
+        [payload.device_id],
+      );
+      if (active.rowCount === 0) {
+        return reply.code(401).send({
+          error: 'device_deactivated',
+          message: 'このデバイスは無効化されています。新しい端末でログインしてください',
+        });
+      }
+
       req.clientId = payload.sub;
       req.deviceId = payload.device_id;
     } catch {

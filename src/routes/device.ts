@@ -6,10 +6,12 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { issueDeviceToken } from '../auth/jwt.js';
 import { config } from '../db/../config.js';
 import { query, withTransaction } from '../db/pool.js';
 import { ingestEvents } from '../engine/events.js';
 import { audit } from '../lib/audit.js';
+import { hashPassword, verifyPassword } from '../lib/password.js';
 import { notifyPermissionIssue, notifySos } from '../notify/dispatcher.js';
 
 /**
@@ -67,6 +69,22 @@ const sosSchema = z.object({
 const permissionHealthSchema = z.object({
   /** 失効している権限のリスト */
   issues: z.array(z.enum(['usage_stats', 'battery_optimization', 'notification', 'location'])),
+});
+
+/** クライアントのメール登録リクエスト */
+const clientAddEmailSchema = z.object({
+  email: z.string().email().max(255),
+  password: z.string().min(8).max(200),
+});
+
+/** クライアントのメールログインリクエスト */
+const clientLoginSchema = z.object({
+  email: z.string().email().max(255),
+  password: z.string().min(1).max(200),
+  platform: z.string().min(1).max(50),
+  app_version: z.string().max(50).optional(),
+  fcm_token: z.string().max(500).optional(),
+  consent_version: z.string().min(1).max(50),
 });
 
 /**
@@ -318,4 +336,151 @@ export default async function deviceRoutes(app: FastifyInstance): Promise<void> 
     ]);
     return reply.send({ ok: true });
   });
+
+  // ===========================================================================
+  // クライアント機種変更対応
+  // ===========================================================================
+
+  /**
+   * POST /v1/clients/me/email — クライアントのメール登録
+   *
+   * 既存クライアント（デバイストークン認証済み）にメール+パスワードを付与する。
+   * 機種変更時に /v1/clients/login でログインできるようになる。
+   *
+   * 200: 登録成功
+   * 400: バリデーションエラー
+   * 409: already_registered（既にメール登録済み）/ email_taken（他クライアントが使用中）
+   */
+  app.post(
+    '/v1/clients/me/email',
+    { preHandler: app.requireDevice },
+    async (req, reply) => {
+      const parsed = clientAddEmailSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_request', issues: parsed.error.issues });
+      }
+      const { email, password } = parsed.data;
+      const clientId = req.clientId!;
+
+      // 既にメール登録済みかチェック
+      const me = await query<{ email: string | null }>(
+        'SELECT email FROM clients WHERE id = $1',
+        [clientId],
+      );
+      if (me.rows[0]?.email) {
+        return reply.code(409).send({
+          error: 'already_registered',
+          message: '既にメールアドレスが登録されています',
+        });
+      }
+
+      const normalizedEmail = email.toLowerCase().trim();
+      const password_hash = await hashPassword(password);
+
+      try {
+        await query(
+          'UPDATE clients SET email = $2, password_hash = $3 WHERE id = $1',
+          [clientId, normalizedEmail, password_hash],
+        );
+        return reply.send({ ok: true });
+      } catch (err) {
+        if ((err as { code?: string }).code === '23505') {
+          return reply.code(409).send({
+            error: 'email_taken',
+            message: 'このメールアドレスは他のアカウントで使用されています',
+          });
+        }
+        throw err;
+      }
+    },
+  );
+
+  /**
+   * POST /v1/clients/login — クライアントのメールログイン（機種変更用）
+   *
+   * メール+パスワードで認証し、同じ client_id に新デバイスを登録する。
+   * 旧デバイスは全て無効化される（deactivated_at を設定）。
+   *
+   * 【旧端末無効化の理由】
+   * 旧端末が confirm_alive を送ると ALIVE に誤復帰し死亡を見逃す（絶対ルール1違反）。
+   * screen_on_count > 0 のハートビートが生存イベント扱いされる危険もある。
+   *
+   * 200: ログイン成功
+   * 400: バリデーションエラー
+   * 401: invalid_credentials
+   * 429: レート制限
+   */
+  app.post(
+    '/v1/clients/login',
+    {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: '1 hour',
+          keyGenerator: (req) => req.ip,
+        },
+      },
+    },
+    async (req, reply) => {
+      const parsed = clientLoginSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_request', issues: parsed.error.issues });
+      }
+      const { email, password, platform, app_version, fcm_token, consent_version } = parsed.data;
+
+      // 1) email → client 検索 + パスワード検証
+      const res = await query<{ id: string; password_hash: string | null }>(
+        'SELECT id, password_hash FROM clients WHERE email = $1',
+        [email.toLowerCase().trim()],
+      );
+      const client = res.rows[0];
+
+      // ユーザー列挙攻撃対策: 存在しない場合もダミー検証で応答時間を揃える
+      const DUMMY_HASH =
+        'scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+      const ok = await verifyPassword(password, client?.password_hash ?? DUMMY_HASH);
+
+      if (!client || !ok) {
+        return reply
+          .code(401)
+          .send({ error: 'invalid_credentials', message: 'メールアドレスまたはパスワードが違います' });
+      }
+
+      const clientId = client.id;
+
+      // 2) 旧デバイスを全て無効化
+      await query(
+        'UPDATE devices SET deactivated_at = now() WHERE client_id = $1 AND deactivated_at IS NULL',
+        [clientId],
+      );
+
+      // 3) 新デバイスを作成
+      const deviceRes = await query<{ id: string }>(
+        `INSERT INTO devices (client_id, platform, fcm_token, app_version, last_seen_at)
+         VALUES ($1, $2, $3, $4, now())
+         RETURNING id`,
+        [clientId, platform, fcm_token ?? null, app_version ?? null],
+      );
+      const deviceId = deviceRes.rows[0]!.id;
+
+      // 4) consent_version / consent_at を更新
+      await query(
+        'UPDATE clients SET consent_version = $2, consent_at = now() WHERE id = $1',
+        [clientId, consent_version],
+      );
+
+      // 5) device JWT 発行
+      const device_token = issueDeviceToken(app, clientId, deviceId);
+
+      // 6) 監査ログ
+      await audit(clientId, 'client_device_login', {
+        device_id: deviceId,
+        platform,
+        app_version: app_version ?? null,
+        consent_version,
+      });
+
+      return reply.send({ client_id: clientId, device_id: deviceId, device_token });
+    },
+  );
 }
