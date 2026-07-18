@@ -64,6 +64,8 @@ const sosDetailSchema = z.object({
   battery_level: z.number().nullable(),
   fired_at: z.date(),
   resolved_at: z.date().nullable(),
+  /** 位置情報の測位時刻。null = fired_at と同時（キャッシュではない）。 */
+  location_captured_at: z.date().nullable(),
 });
 
 
@@ -155,7 +157,8 @@ export default async function watcherViewRoutes(app: FastifyInstance): Promise<v
 
     const res = await query(
       `SELECT s.id, s.client_id, c.display_name AS client_name,
-              s.latitude, s.longitude, s.battery_level, s.fired_at, s.resolved_at
+              s.latitude, s.longitude, s.battery_level, s.fired_at, s.resolved_at,
+              s.location_captured_at
          FROM sos_incidents s
          JOIN clients c ON c.id = s.client_id
          JOIN watch_links l ON l.client_id = s.client_id

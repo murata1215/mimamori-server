@@ -208,6 +208,7 @@ watch_links・スタンプ履歴・ステータス履歴はそのまま継続す
     "battery_level": 80,
     "screen_on_count": 3,        // 回数のみ。時刻詳細は送らない
     "had_app_usage": true,       // boolean のみ。何のアプリかは送らない
+    "had_movement": true,        // 移動有無。boolean のみ。座標・距離・軌跡は送らない
     "app_version": "0.1.0"
   }],
   "delivery_stats": { "sent": 10, "failed": 0, "queued": 0 }   // KPI計測用
@@ -215,8 +216,8 @@ watch_links・スタンプ履歴・ステータス履歴はそのまま継続す
 → { "accepted": 1, "duplicates": 0, "revived": true }
 ```
 
-**生存イベント扱いになる条件**: `screen_on_count > 0` または `had_app_usage = true`。
-両方0のハートビートは「端末は生きているが操作なし」として経過時間のカウントを継続する。
+**生存イベント扱いになる条件**: `screen_on_count > 0` または `had_app_usage = true` または `had_movement = true`。
+いずれも0/false/省略のハートビートは「端末は生きているが操作なし」として経過時間のカウントを継続する。
 
 未来時刻の `occurred_at` は受信時刻に丸める（端末の時計ズレ対策）。
 同一 `occurred_at` の再送は重複として無視（冪等）。
@@ -224,7 +225,10 @@ watch_links・スタンプ履歴・ステータス履歴はそのまま継続す
 ### `POST /v1/sos`
 **位置情報を受け取る唯一のエンドポイント。** 判定ジョブを介さず即時にウォッチャーへ通知。
 ```json
-{ "lat": 35.6812, "lng": 139.7671, "battery_level": 15 }   // lat/lng は省略可（位置不明でも送信優先）
+{ "lat": 35.6812, "lng": 139.7671, "battery_level": 15,
+  "location_captured_at": "2026-07-18T00:30:00Z" }
+// lat/lng は省略可（位置不明でも送信優先）
+// location_captured_at: キャッシュ位置の測位時刻。省略時はSOS発動時刻扱い
 → 201 { "incident_id": "..." }
 ```
 
@@ -313,7 +317,7 @@ watch_links・スタンプ履歴・ステータス履歴はそのまま継続す
 ### `GET /v1/sos/:id`
 位置を含む唯一のレスポンス。**resolve後・purge後(30日)は404**。
 ```json
-{ "id","client_id","client_name","latitude","longitude","battery_level","fired_at","resolved_at" }
+{ "id","client_id","client_name","latitude","longitude","battery_level","fired_at","resolved_at","location_captured_at" }
 ```
 
 ### `POST /v1/sos/:id/resolve`
@@ -458,7 +462,7 @@ HMAC-SHA256（`sign` / `t` / `nonce` ヘッダ）＋5分のリプレイ窓。未
 | `silent` | クライアント端末 | `action`（`heartbeat_now`） |
 | `watch` | ウォッチャー | `status`, `client_name` |
 | `alert` | ウォッチャー | `status`, `client_name`, `device_silent` |
-| `sos` | ウォッチャー | `status`, `client_name`, `incident_id` |
+| `sos` | ウォッチャー | `status`, `client_name`, `incident_id`, `location_captured_at`（キャッシュ位置時のみ） |
 | `permission` | ウォッチャー | `status`, `client_name`, `reason` |
 | `outage` | 全ウォッチャー | `gap_minutes`（※特定クライアントに紐づかないため `client_id` / `client_name` は無い） |
 | `stamp` | ウォッチャー（from_client 時） | `stamp`, `client_name`, `direction`（`from_client`） |

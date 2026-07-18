@@ -48,6 +48,22 @@ describe('isAliveEvent — heartbeat の扱い', () => {
     expect(isAliveEvent(makeEvent({ meta: { had_app_usage: 'false' } }))).toBe(false);
     expect(isAliveEvent(makeEvent({ meta: { had_app_usage: 0 } }))).toBe(false);
   });
+
+  it('移動あり(had_movement: true)は生存イベント', () => {
+    expect(isAliveEvent(makeEvent({ meta: { had_movement: true } }))).toBe(true);
+  });
+
+  it('【重要】移動なし(had_movement: false)は生存イベントではない', () => {
+    // had_movement: false は「端末が測位した結果、移動なし」であり
+    // 持ち主の行動証拠ではない。screen_on_count: 0 と同じ扱い。
+    expect(isAliveEvent(makeEvent({ meta: { had_movement: false } }))).toBe(false);
+  });
+
+  it('had_movement のみ true で他が 0/false でも生存イベント', () => {
+    expect(
+      isAliveEvent(makeEvent({ meta: { screen_on_count: 0, had_app_usage: false, had_movement: true } })),
+    ).toBe(true);
+  });
 });
 
 describe('isAliveEvent — その他のイベント種別', () => {

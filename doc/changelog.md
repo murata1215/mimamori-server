@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-07-18 — 移動有無シグナル + SOS キャッシュ位置フォールバック
+
+### had_movement（移動有無）
+- heartbeat ペイロードに optional `had_movement` (boolean) を追加。
+- `isAliveEvent()` の判定条件に `had_movement === true` を追加。
+  `screen_on_count > 0 || had_app_usage === true || had_movement === true` で生存イベント。
+- **座標・距離・軌跡は受け取らない**（プライバシー原則不変。events.meta に boolean のみ格納）。
+- 省略時は従来どおり（既存ペイロード互換。判定に影響なし）。
+- `had_movement: false` は生存イベントではない（`screen_on_count: 0` と同じ扱い）。
+
+### location_captured_at（SOS キャッシュ位置）
+- `POST /v1/sos` に optional `location_captured_at` (ISO8601) を追加。
+- マイグレーション（009）: `sos_incidents.location_captured_at timestamptz` を追加。
+- 省略時は null（= fired_at と同義。新規測位成功時）。
+- `GET /v1/sos/:id` のレスポンスに `location_captured_at` を追加（null 許容）。
+- SOS FCM 通知の data に `location_captured_at` を含める（キャッシュ位置時のみ）。
+- 判定エンジン・状態遷移の基本フローは無改修。
+
 ## 2026-07-18 — クライアント機種変更対応
 
 クライアント（見守られ側）にもメール認証を追加し、機種変更時に再ペアリング不要にした。

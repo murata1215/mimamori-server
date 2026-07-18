@@ -263,7 +263,11 @@ export async function notifyAlert(clientId: string, deviceSilent: boolean): Prom
  * @param clientId - クライアントID
  * @param incidentId - SOSインシデントID
  */
-export async function notifySos(clientId: string, incidentId: string): Promise<void> {
+export async function notifySos(
+  clientId: string,
+  incidentId: string,
+  locationCapturedAt?: string | null,
+): Promise<void> {
   const [watchers, name] = await Promise.all([getWatchersFor(clientId), getClientName(clientId)]);
   const body = `${name}さんがSOSを発動しました。すぐに確認してください。`;
 
@@ -272,6 +276,7 @@ export async function notifySos(clientId: string, incidentId: string): Promise<v
       status: 'SOS',
       client_name: name,
       incident_id: incidentId,
+      ...(locationCapturedAt ? { location_captured_at: locationCapturedAt } : {}),
     });
 
     // SOSのSMSはownerプランのみ（限界費用の隔離原則）

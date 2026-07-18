@@ -30,6 +30,11 @@ const heartbeatSchema = z.object({
   screen_on_count: z.number().int().min(0).optional(),
   /** 直近のアプリ利用有無。boolean のみ。 */
   had_app_usage: z.boolean().optional(),
+  /**
+   * 直近の移動有無。boolean のみ。座標・距離・軌跡は受け取らない。
+   * プライバシー原則不変: サーバーへ座標が出るのは SOS 時のみ。
+   */
+  had_movement: z.boolean().optional(),
   app_version: z.string().max(50).optional(),
 });
 
@@ -63,6 +68,11 @@ const sosSchema = z.object({
   lat: z.number().min(-90).max(90).optional(),
   lng: z.number().min(-180).max(180).optional(),
   battery_level: z.number().int().min(0).max(100).optional(),
+  /**
+   * 位置情報の測位時刻。端末が新規測位に失敗しキャッシュ位置を送る場合に、
+   * 「何分前の位置か」をウォッチャーに示すため。省略時は SOS 発動時刻扱い。
+   */
+  location_captured_at: z.coerce.date().optional(),
 });
 
 /** 権限失効の申告 */
@@ -137,6 +147,7 @@ export default async function deviceRoutes(app: FastifyInstance): Promise<void> 
             ...(hb.battery_level !== undefined ? { battery_level: hb.battery_level } : {}),
             ...(hb.screen_on_count !== undefined ? { screen_on_count: hb.screen_on_count } : {}),
             ...(hb.had_app_usage !== undefined ? { had_app_usage: hb.had_app_usage } : {}),
+            ...(hb.had_movement !== undefined ? { had_movement: hb.had_movement } : {}),
           },
         })),
       );
@@ -182,16 +193,17 @@ export default async function deviceRoutes(app: FastifyInstance): Promise<void> 
       return reply.code(400).send({ error: 'invalid_request', issues: parsed.error.issues });
     }
     const clientId = req.clientId!;
-    const { lat, lng, battery_level } = parsed.data;
+    const { lat, lng, battery_level, location_captured_at } = parsed.data;
 
     const incidentId = await withTransaction(async (client) => {
       // 位置情報は sos_incidents にのみ保存する。
       // purge_after で30日後に物理削除される。
+      // location_captured_at: キャッシュ位置の測位時刻。省略時は NULL（= fired_at と同義）。
       const res = await client.query<{ id: string }>(
-        `INSERT INTO sos_incidents (client_id, latitude, longitude, battery_level, fired_at, purge_after)
-         VALUES ($1, $2, $3, $4, now(), now() + ($5 || ' days')::interval)
+        `INSERT INTO sos_incidents (client_id, latitude, longitude, battery_level, fired_at, purge_after, location_captured_at)
+         VALUES ($1, $2, $3, $4, now(), now() + ($5 || ' days')::interval, $6)
          RETURNING id`,
-        [clientId, lat ?? null, lng ?? null, battery_level ?? null, config.SOS_PURGE_DAYS],
+        [clientId, lat ?? null, lng ?? null, battery_level ?? null, config.SOS_PURGE_DAYS, location_captured_at ?? null],
       );
       const id = res.rows[0]!.id;
 
@@ -256,7 +268,7 @@ export default async function deviceRoutes(app: FastifyInstance): Promise<void> 
     // 通知はトランザクション外で行う。
     // 通知の遅延・失敗でSOSの記録自体がロールバックされてはならない。
     // 通知失敗は audit_log に残り、端末側のSMSフォールバックが働く。
-    await notifySos(clientId, incidentId).catch((err) => {
+    await notifySos(clientId, incidentId, location_captured_at?.toISOString() ?? null).catch((err) => {
       console.error('[sos] ウォッチャーへの通知に失敗しました:', err);
     });
 

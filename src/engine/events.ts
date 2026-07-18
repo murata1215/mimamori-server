@@ -74,7 +74,8 @@ export function isAliveEvent(e: IngestEvent): boolean {
     const meta = e.meta ?? {};
     const screenOn = Number(meta.screen_on_count ?? 0);
     const hadUsage = meta.had_app_usage === true;
-    return screenOn > 0 || hadUsage;
+    const hadMovement = meta.had_movement === true;
+    return screenOn > 0 || hadUsage || hadMovement;
   }
 
   // sos は生存イベントではない（SOSは別状態であり、ALIVE復帰させてはならない）
