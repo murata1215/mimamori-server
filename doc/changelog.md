@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-07-18 — 見守り解除 API
+
+ウォッチャーが自分の見守り紐づけ（watch_link）を解除する API を追加。
+
+- `DELETE /v1/clients/:client_id` 🔒watcher: 自分の watch_link のみ削除。
+  client レコード・他ウォッチャーの watch_link・billable フラグには触れない。
+  audit_log に `watch_link_removed` を記録。
+  解除後は `GET /v1/clients` 一覧から消え、`GET /v1/clients/me/watchers` からも消える。
+  最後のウォッチャーが解除した場合、client は残るが通知先ゼロになる。
+- 判定エンジン・状態遷移・通知は無改修。
+
 ## 2026-07-18 — 日次活動サマリ API
 
 ウォッチャー詳細画面に「過去N日間の活動量」を表示するための集計API。

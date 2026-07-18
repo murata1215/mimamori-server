@@ -327,6 +327,17 @@ watch_links・スタンプ履歴・ステータス履歴はそのまま継続す
 | `battery_min` | `int?` | バッテリー最小値（データ無し日は null） |
 | `battery_max` | `int?` | バッテリー最大値（データ無し日は null） |
 
+### `DELETE /v1/clients/:client_id` — 見守り解除
+自分の watch_link のみ削除する。client レコード・他ウォッチャーの watch_link には触れない。
+```json
+→ 200 { "ok": true }
+→ 404 { "error": "not_found" }   // 権限なし or 存在しない or 既に解除済み
+```
+- 解除後は `GET /v1/clients` の一覧から消え、`GET /v1/clients/me/watchers` からも消える
+- 最後のウォッチャーが解除した場合、client は残るが通知先ゼロになる
+- billable フラグは動かさない（課金の予測可能性の原則）
+- `audit_log` に `watch_link_removed` が記録される
+
 ### `GET /v1/clients`
 **返すのはステータスのみ。イベントデータは絶対に返さない**（原則1）。
 緊急度順（SOS→ALERT→CONFIRMING→WATCH→ALIVE）にソート済み。

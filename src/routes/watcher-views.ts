@@ -109,6 +109,36 @@ const sosDetailSchema = z.object({
  */
 export default async function watcherViewRoutes(app: FastifyInstance): Promise<void> {
   /**
+   * DELETE /v1/clients/:client_id — 見守り紐づけの解除
+   *
+   * 自分の watch_link のみ削除する。client レコード・他ウォッチャーの watch_link には触れない。
+   * billable フラグは動かさない（課金の予測可能性の原則）。
+   * 最後のウォッチャーが解除した場合、client は残るが通知先ゼロになる。
+   */
+  app.delete('/v1/clients/:client_id', { preHandler: app.requireWatcher }, async (req, reply) => {
+    const params = z.object({ client_id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ error: 'invalid_request' });
+
+    const watcherId = req.watcherId!;
+    const clientId = params.data.client_id;
+
+    const res = await query(
+      'DELETE FROM watch_links WHERE watcher_id = $1 AND client_id = $2',
+      [watcherId, clientId],
+    );
+
+    if ((res.rowCount ?? 0) === 0) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+
+    await audit(clientId, 'watch_link_removed', {
+      watcher_id: watcherId,
+    });
+
+    return reply.send({ ok: true });
+  });
+
+  /**
    * GET /v1/clients — 見守り対象の一覧
    *
    * 返すのは status と status_changed_at のみ。イベントデータは絶対に返さない。

@@ -35,7 +35,9 @@ export type AuditEvent =
   | 'sensor_updated'       // センサーの有効/無効の切り替え
   | 'sensor_removed'       // センサーの登録解除
   // --- 機種変更対応 ---
-  | 'client_device_login'; // クライアント端末のメールログイン（機種変更）
+  | 'client_device_login'  // クライアント端末のメールログイン（機種変更）
+  // --- 見守り関係の管理 ---
+  | 'watch_link_removed';  // ウォッチャーが見守り紐づけを解除
 
 /**
  * 監査ログを1件記録する。
