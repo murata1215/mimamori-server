@@ -59,6 +59,29 @@ export async function buildApp(): Promise<FastifyInstance> {
     bodyLimit: 1_048_576, // 1MB
   });
 
+  // --- Content-Type: application/json + 空ボディの許容 ---
+  // Flutter の dio は DELETE でも Content-Type: application/json を付けるが、
+  // ボディは空。Fastify のデフォルトパーサーはこれを FST_ERR_CTP_EMPTY_JSON_BODY
+  // で 400 にするため、空ボディを {} として受け入れるように上書きする。
+  // POST /v1/sos/:id/resolve でも同じ問題が起きていた（req.body ?? {} で対処していたが
+  // パーサー段階で弾かれるケースはそれでは防げない）。
+  app.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (_req, body, done) => {
+      const str = typeof body === 'string' ? body : body.toString();
+      if (str.length === 0) {
+        done(null, undefined);
+        return;
+      }
+      try {
+        done(null, JSON.parse(str));
+      } catch (err) {
+        done(err as Error, undefined);
+      }
+    },
+  );
+
   // --- レート制限 ---
   // グローバルのデフォルト。個別エンドポイントは routes 側で上書きする。
   await app.register(rateLimit, {

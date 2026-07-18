@@ -103,6 +103,25 @@ describe('DELETE /v1/clients/:client_id — 見守り解除', () => {
     expect(JSON.parse(res.body)).toEqual({ ok: true });
   });
 
+  it('Content-Type: application/json + 空ボディでも 200（Flutter dio 互換）', async () => {
+    const { token } = await createWatcher();
+    const { clientId } = await createClient(token);
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/v1/clients/${clientId}`,
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      // payload を指定しない = 空ボディ + Content-Type: application/json
+      // Fastify デフォルトでは FST_ERR_CTP_EMPTY_JSON_BODY で 400 になる
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ ok: true });
+  });
+
   it('解除後 GET /v1/clients の一覧から消える', async () => {
     const { token } = await createWatcher();
     const { clientId } = await createClient(token);
