@@ -115,6 +115,8 @@ describe('GET /v1/clients/:client_id/activity', () => {
       expect(day.active_buckets).toBe(0);
       expect(day.battery_min).toBeNull();
       expect(day.battery_max).toBeNull();
+      expect(day.charging_events).toBe(0);
+      expect(day.step_count).toBeNull();
     }
   });
 
@@ -225,6 +227,70 @@ describe('GET /v1/clients/:client_id/activity', () => {
     expect(res.statusCode).toBe(404);
   });
 
+  it('is_charging と step_count が集計に反映される', async () => {
+    const { token } = await createWatcher();
+    const { clientId, deviceToken } = await createClient(token);
+
+    const now = Date.now();
+    // 充電していない → 充電開始 → 充電中 → 充電停止 → 充電開始（2回遷移）
+    await app.inject({
+      method: 'POST',
+      url: '/v1/heartbeats',
+      headers: { authorization: `Bearer ${deviceToken}` },
+      payload: {
+        heartbeats: [
+          { occurred_at: new Date(now - 4 * 60000).toISOString(), is_charging: false, step_count: 100, battery_level: 50 },
+          { occurred_at: new Date(now - 3 * 60000).toISOString(), is_charging: true, step_count: 200, battery_level: 55 },
+          { occurred_at: new Date(now - 2 * 60000).toISOString(), is_charging: true, step_count: 500, battery_level: 60 },
+          { occurred_at: new Date(now - 1 * 60000).toISOString(), is_charging: false, step_count: 800, battery_level: 58 },
+          { occurred_at: new Date(now).toISOString(), is_charging: true, step_count: 1200, battery_level: 62 },
+        ],
+      },
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/clients/${clientId}/activity?days=1`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const today = JSON.parse(res.body).days[0];
+    // false→true が2回（HB2とHB5）
+    expect(today.charging_events).toBe(2);
+    // step_count の最大値 = 1200
+    expect(today.step_count).toBe(1200);
+  });
+
+  it('is_charging/step_count が null/未送信でもエラーにならない（後方互換）', async () => {
+    const { token } = await createWatcher();
+    const { clientId, deviceToken } = await createClient(token);
+
+    await app.inject({
+      method: 'POST',
+      url: '/v1/heartbeats',
+      headers: { authorization: `Bearer ${deviceToken}` },
+      payload: {
+        heartbeats: [
+          { occurred_at: new Date().toISOString(), screen_on_count: 1, battery_level: 80 },
+          { occurred_at: new Date(Date.now() - 60000).toISOString(), is_charging: null, step_count: null, battery_level: 70 },
+        ],
+      },
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/clients/${clientId}/activity?days=1`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const today = JSON.parse(res.body).days[0];
+    expect(today.heartbeat_count).toBe(2);
+    expect(today.charging_events).toBe(0);
+    expect(today.step_count).toBeNull();
+  });
+
   it('レスポンスに余計なフィールドが含まれない', async () => {
     const { token } = await createWatcher();
     const { clientId } = await createClient(token);
@@ -243,6 +309,7 @@ describe('GET /v1/clients/:client_id/activity', () => {
     const allowedKeys = [
       'date', 'screen_on_count', 'app_usage_slots', 'movement_slots',
       'heartbeat_count', 'active_buckets', 'battery_min', 'battery_max',
+      'charging_events', 'step_count',
     ].sort();
     for (const day of body.days) {
       expect(Object.keys(day).sort()).toEqual(allowedKeys);

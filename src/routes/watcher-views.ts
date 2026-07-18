@@ -77,6 +77,10 @@ const activityDaySchema = z.object({
   battery_min: z.number().int().nullable(),
   /** バッテリー最大値 */
   battery_max: z.number().int().nullable(),
+  /** 充電操作回数（is_charging が false→true に遷移した回数） */
+  charging_events: z.number().int(),
+  /** その日の歩数（step_count の最大値 = 本日累計の最大値） */
+  step_count: z.number().int().nullable(),
 });
 
 const activityResponseSchema = z.object({
@@ -443,6 +447,7 @@ export default async function watcherViewRoutes(app: FastifyInstance): Promise<v
     }
 
     // generate_series で days 分の日付を生成し、LEFT JOIN で 0 埋め
+    // charging_events: is_charging の false→true 遷移をウィンドウ関数で検出
     const res = await query<{
       date: string;
       screen_on_count: string;
@@ -452,6 +457,8 @@ export default async function watcherViewRoutes(app: FastifyInstance): Promise<v
       active_buckets: string;
       battery_min: number | null;
       battery_max: number | null;
+      charging_events: string;
+      step_count: number | null;
     }>(
       `WITH date_range AS (
          SELECT d::date AS day
@@ -461,20 +468,36 @@ export default async function watcherViewRoutes(app: FastifyInstance): Promise<v
            '1 day'::interval
          ) AS d
        ),
-       daily AS (
+       ordered_events AS (
          SELECT
            (occurred_at AT TIME ZONE 'Asia/Tokyo')::date AS day,
+           meta,
+           occurred_at,
+           LAG((meta->>'is_charging')::boolean) OVER (
+             PARTITION BY (occurred_at AT TIME ZONE 'Asia/Tokyo')::date
+             ORDER BY occurred_at
+           ) AS prev_is_charging
+         FROM events
+         WHERE client_id = $1
+           AND event_type = 'heartbeat'
+           AND occurred_at >= (now() AT TIME ZONE 'Asia/Tokyo')::date - ($2 - 1)
+       ),
+       daily AS (
+         SELECT
+           day,
            COALESCE(SUM((meta->>'screen_on_count')::int), 0) AS screen_on_count,
            COUNT(*) FILTER (WHERE (meta->>'had_app_usage')::boolean = true) AS app_usage_slots,
            COUNT(*) FILTER (WHERE (meta->>'had_movement')::boolean = true) AS movement_slots,
            COUNT(*) AS heartbeat_count,
            COUNT(DISTINCT (EXTRACT(hour FROM occurred_at AT TIME ZONE 'Asia/Tokyo')::int / 4)) AS active_buckets,
            MIN((meta->>'battery_level')::int) AS battery_min,
-           MAX((meta->>'battery_level')::int) AS battery_max
-         FROM events
-         WHERE client_id = $1
-           AND event_type = 'heartbeat'
-           AND occurred_at >= (now() AT TIME ZONE 'Asia/Tokyo')::date - ($2 - 1)
+           MAX((meta->>'battery_level')::int) AS battery_max,
+           COUNT(*) FILTER (
+             WHERE (meta->>'is_charging')::boolean = true
+               AND (prev_is_charging IS DISTINCT FROM true)
+           ) AS charging_events,
+           MAX((meta->>'step_count')::int) AS step_count
+         FROM ordered_events
          GROUP BY day
        )
        SELECT
@@ -485,7 +508,9 @@ export default async function watcherViewRoutes(app: FastifyInstance): Promise<v
          COALESCE(d.heartbeat_count, 0) AS heartbeat_count,
          COALESCE(d.active_buckets, 0) AS active_buckets,
          d.battery_min,
-         d.battery_max
+         d.battery_max,
+         COALESCE(d.charging_events, 0) AS charging_events,
+         d.step_count
        FROM date_range dr
        LEFT JOIN daily d ON d.day = dr.day
        ORDER BY dr.day ASC`,
@@ -503,6 +528,8 @@ export default async function watcherViewRoutes(app: FastifyInstance): Promise<v
         active_buckets: Number(r.active_buckets),
         battery_min: r.battery_min,
         battery_max: r.battery_max,
+        charging_events: Number(r.charging_events),
+        step_count: r.step_count,
       })),
     };
 

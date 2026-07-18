@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-07-19 — ハートビートに充電状態・歩数フィールドを追加
+
+Flutter 側が `is_charging`（充電中か）と `step_count`（本日累積歩数）を送信するようになったため、
+サーバー側で受け入れ・保存・日次集計を対応。
+
+- `POST /v1/heartbeats`: `is_charging`（boolean | null）と `step_count`（int | null）を受け付ける。
+  null / 未送信時は無視（後方互換性あり）。`events.meta` (jsonb) に保存。
+- `GET /v1/clients/:id/activity`: 日次集計に `charging_events`（false→true 遷移回数 = 充電操作回数）と
+  `step_count`（その日の最大値 = 1日の歩数）を追加。
+- **生存判定（`isAliveEvent`）は無改修。** `is_charging` / `step_count` は集計のみに使用し、
+  デッドマンスイッチの生存証明には影響させない。充電状態だけで生存とみなすと、
+  充電器に挿さったまま持ち主が倒れている場合に検知漏れが生じるため。
+- DB マイグレーションなし（jsonb の meta に追加フィールドを保存するのみ）。
+- テスト2件追加 → 計230件 green。
+
 ## 2026-07-18 — FCM 有効化と iOS（APNs）向けペイロード対応
 
 Firebase の認証情報を設定して FCM を有効化し、あわせて iOS でプッシュが正しく届くよう

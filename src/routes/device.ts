@@ -35,6 +35,17 @@ const heartbeatSchema = z.object({
    * プライバシー原則不変: サーバーへ座標が出るのは SOS 時のみ。
    */
   had_movement: z.boolean().optional(),
+  /**
+   * 端末が充電中かどうか。充電器を挿す操作は人間の行動の証拠。
+   * 取得失敗時は null/省略。日次集計で false→true 遷移回数を充電操作回数として算出する。
+   */
+  is_charging: z.boolean().nullable().optional(),
+  /**
+   * 本日0:00からの累積歩数。歩行は身体が動いている直接的な生存シグナル。
+   * iOS: CoreMotion/CMPedometer、Android: pedometer_2。
+   * 権限未許可・取得失敗時は null/省略。日次集計で最大値をその日の歩数とする。
+   */
+  step_count: z.number().int().min(0).nullable().optional(),
   app_version: z.string().max(50).optional(),
 });
 
@@ -148,6 +159,8 @@ export default async function deviceRoutes(app: FastifyInstance): Promise<void> 
             ...(hb.screen_on_count !== undefined ? { screen_on_count: hb.screen_on_count } : {}),
             ...(hb.had_app_usage !== undefined ? { had_app_usage: hb.had_app_usage } : {}),
             ...(hb.had_movement !== undefined ? { had_movement: hb.had_movement } : {}),
+            ...(hb.is_charging != null ? { is_charging: hb.is_charging } : {}),
+            ...(hb.step_count != null ? { step_count: hb.step_count } : {}),
           },
         })),
       );

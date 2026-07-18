@@ -209,6 +209,8 @@ watch_links・スタンプ履歴・ステータス履歴はそのまま継続す
     "screen_on_count": 3,        // 回数のみ。時刻詳細は送らない
     "had_app_usage": true,       // boolean のみ。何のアプリかは送らない
     "had_movement": true,        // 移動有無。boolean のみ。座標・距離・軌跡は送らない
+    "is_charging": false,        // 充電中か。null/省略可。日次集計で遷移回数を算出
+    "step_count": 2345,          // 本日0:00からの累積歩数。null/省略可
     "app_version": "0.1.0"
   }],
   "delivery_stats": { "sent": 10, "failed": 0, "queued": 0 }   // KPI計測用
@@ -218,6 +220,7 @@ watch_links・スタンプ履歴・ステータス履歴はそのまま継続す
 
 **生存イベント扱いになる条件**: `screen_on_count > 0` または `had_app_usage = true` または `had_movement = true`。
 いずれも0/false/省略のハートビートは「端末は生きているが操作なし」として経過時間のカウントを継続する。
+`is_charging` / `step_count` は日次活動サマリの集計にのみ使用し、生存判定には影響しない。
 
 未来時刻の `occurred_at` は受信時刻に丸める（端末の時計ズレ対策）。
 同一 `occurred_at` の再送は重複として無視（冪等）。
@@ -307,7 +310,9 @@ watch_links・スタンプ履歴・ステータス履歴はそのまま継続す
         "heartbeat_count": 68,
         "active_buckets": 3,
         "battery_min": 15,
-        "battery_max": 98
+        "battery_max": 98,
+        "charging_events": 2,
+        "step_count": 3500
       },
       { "date": "2026-07-17", "screen_on_count": 47, ... },
       { "date": "2026-07-18", "screen_on_count": 12, ... }
@@ -326,6 +331,8 @@ watch_links・スタンプ履歴・ステータス履歴はそのまま継続す
 | `active_buckets` | `int` (0-6) | 活動があった4h時間帯バケット数 |
 | `battery_min` | `int?` | バッテリー最小値（データ無し日は null） |
 | `battery_max` | `int?` | バッテリー最大値（データ無し日は null） |
+| `charging_events` | `int` | 充電操作回数（`is_charging` false→true 遷移数） |
+| `step_count` | `int?` | その日の歩数（`step_count` の最大値。データ無し日は null） |
 
 ### `DELETE /v1/clients/:client_id` — 見守り解除
 自分の watch_link のみ削除する。client レコード・他ウォッチャーの watch_link には触れない。
