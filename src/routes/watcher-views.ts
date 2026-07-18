@@ -19,16 +19,32 @@ import { canWatch, sendValidated } from '../lib/watcher-guard.js';
 /**
  * クライアント一覧の要素スキーマ。
  *
- * 【変更禁止】ここにフィールドを追加する場合、それが
- * 「見守られる本人に見られて構わない情報か」を必ず検討すること。
- * last_alive_event_at / last_heartbeat_at を足したくなったら、それは
- * 「最終操作時刻」の開示であり、原則1に真っ向から反する。
+ * 【開示ポリシー】(プロダクトオーナー決定 2026-07-19)
+ * 見守りの中核価値は「本人が最後に操作した時刻」の可視化。
+ * **時刻のみ（15分粒度・内容なし）** の開示は許可する。
+ * 操作内容（アプリ名・URL・開閉状態）の開示は引き続き禁止。
+ * 既に日次活動サマリ（画面点灯回数・利用スロット数）を開示しており整合する。
+ *
+ * ここにフィールドを追加する場合、「見守られる本人に見られて構わない情報か」を
+ * 必ず検討すること。閾値・生データ・行動詳細は返してはならない。
  */
 const clientListItemSchema = z.object({
   id: z.string().uuid(),
   display_name: z.string(),
   status: z.enum(['ALIVE', 'WATCH', 'CONFIRMING', 'ALERT', 'SOS']),
   status_changed_at: z.date(),
+  /**
+   * 最後の「生存イベント」の発生時刻（occurred_at ベース）。
+   * screen_on_count > 0 || had_app_usage = true || had_movement = true のHBの時刻。
+   * = 本人が最後に端末を操作した時刻（15分粒度）。ペアリング直後は null の可能性あり。
+   */
+  last_activity_at: z.date().nullable(),
+  /**
+   * 端末が最後にサーバーと通信した時刻。
+   * 操作有無を問わずハートビートが届くたびに更新される。
+   * 「端末は動いているか」の目安として表示する（設定問題と同種の情報）。
+   */
+  last_seen_at: z.date().nullable(),
   /**
    * 「設定に問題」表示用のフラグ。
    * これは端末の設定状態であって本人の行動情報ではないため開示してよい。
@@ -145,10 +161,11 @@ export default async function watcherViewRoutes(app: FastifyInstance): Promise<v
   /**
    * GET /v1/clients — 見守り対象の一覧
    *
-   * 返すのは status と status_changed_at のみ。イベントデータは絶対に返さない。
+   * ステータス・最終活動時刻・最終通信時刻を返す。
+   * 操作内容（アプリ名・URL）やセンサー生データは返さない。
    *
    * has_issue の判定はサーバー側で行う（端末沈黙 = 45分以上ハートビートなし）。
-   * これは「最終操作時刻」ではなく「端末の設定/接続状態」なので開示してよい。
+   * これは「端末の設定/接続状態」なので開示してよい。
    */
   app.get('/v1/clients', { preHandler: app.requireWatcher }, async (req, reply) => {
     const res = await query(
@@ -157,7 +174,9 @@ export default async function watcherViewRoutes(app: FastifyInstance): Promise<v
               c.status,
               c.status_changed_at,
               c.property_tag,
-              -- 端末沈黙の判定。閾値の生値や最終操作時刻は返さない。
+              c.last_alive_event_at AS last_activity_at,
+              c.last_heartbeat_at AS last_seen_at,
+              -- 端末沈黙の判定。閾値の生値は返さない。
               (c.has_app AND (
                  c.last_heartbeat_at IS NULL
                  OR c.last_heartbeat_at < now() - interval '45 minutes'
