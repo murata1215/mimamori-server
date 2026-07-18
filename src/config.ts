@@ -37,6 +37,14 @@ const envSchema = z.object({
 
   /** コールドスタート時のデフォルト閾値（分）。15時間。 */
   DEFAULT_THRESHOLD_MINUTES: z.coerce.number().int().positive().default(900),
+  /**
+   * iOS 端末向けのデフォルト閾値（分）。24時間。
+   * iOS はバックグラウンド実行が OS 任せで 15分周期ハートビートが保証されない。
+   * screen_on_count / had_app_usage 相当の API もないため、生存シグナルは
+   * had_movement・アプリ起動時送信・BGAppRefresh に依存し、間隔が長くなる。
+   * 学習が進めば iOS の実シグナル間隔 p99 に自然収束する。
+   */
+  DEFAULT_THRESHOLD_MINUTES_IOS: z.coerce.number().int().positive().default(1440),
   /** オンボーディングで「よく触る」を選んだ場合の初期閾値（分）。10時間。 */
   FREQUENT_THRESHOLD_MINUTES: z.coerce.number().int().positive().default(600),
   /** 学習閾値の下限（分）。6時間。学習の暴走防止。 */

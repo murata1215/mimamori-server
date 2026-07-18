@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-07-18 — iOS 端末向け初期しきい値
+
+iOS はバックグラウンド実行が OS 任せで 15分周期ハートビートが保証されず、
+screen_on_count / had_app_usage 相当の API もないため、生存シグナル間隔が Android より長い。
+初期しきい値を長めに設定して誤報を防ぐ。学習エンジンが実シグナル間隔 p99 を学習すれば自然収束する。
+
+- `config.DEFAULT_THRESHOLD_MINUTES_IOS = 1440`（24時間）を追加。既存 Android 用（900分/15時間）は不変。
+- 初期閾値決定を `getInitialThreshold(platform, usageFrequency)` ヘルパーに集約（`src/lib/plan.ts`）。
+  `frequent` 申告 → 600分（platform 不問）、iOS → 1440分、それ以外 → 900分。
+- `clients/pair` と `clients/claim` の2箇所で共通ヘルパーを使用。
+- `clients/login`（機種変更）は既存 threshold を上書きしない（学習済み値を保護）。
+- 判定エンジン・状態遷移・通知・学習エンジンは無改修。
+
 ## 2026-07-18 — 移動有無シグナル + SOS キャッシュ位置フォールバック
 
 ### had_movement（移動有無）

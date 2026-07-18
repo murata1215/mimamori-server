@@ -20,7 +20,7 @@ import { issueDeviceToken } from '../auth/jwt.js';
 import { config } from '../config.js';
 import { query, withTransaction } from '../db/pool.js';
 import { audit } from '../lib/audit.js';
-import { checkClientQuota, createWatchLink } from '../lib/plan.js';
+import { checkClientQuota, createWatchLink, getInitialThreshold } from '../lib/plan.js';
 
 /** provision の TTL（分）。高齢者がQRを表示して家族の到着を待つケースに対応。 */
 const PROVISION_TTL_MINUTES = 30;
@@ -300,11 +300,8 @@ export default async function provisionRoutes(app: FastifyInstance): Promise<voi
         if (!prov) return { error: 'invalid_code' as const };
         if (prov.claimed_at) return { error: 'already_claimed' as const };
 
-        // 自己申告に基づく初期閾値（spec 5.3）
-        const initialThreshold =
-          usage_frequency === 'frequent'
-            ? config.FREQUENT_THRESHOLD_MINUTES
-            : config.DEFAULT_THRESHOLD_MINUTES;
+        // 自己申告 + platform に基づく初期閾値（spec 5.3 + iOS 対応）
+        const initialThreshold = getInitialThreshold(prov.platform, usage_frequency);
 
         // client 作成
         const clientRes = await tx.query<{ id: string }>(

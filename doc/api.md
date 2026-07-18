@@ -87,7 +87,7 @@ Base URL: `https://mimamori-server.devrelay.io`
 {
   "code": "123456", "display_name": "母", "consent_version": "v1.0",
   "platform": "android", "app_version": "0.1.0",
-  "fcm_token": "...", "usage_frequency": "occasional"  // "frequent"→10h / "occasional"→15h
+  "fcm_token": "...", "usage_frequency": "occasional"  // "frequent"→10h / "occasional"→15h(Android), 24h(iOS)
 }
 → 201 { "client_id": "...", "device_id": "...", "device_token": "..." }
 → 400 invalid_code   // 無効・期限切れ・使用済み

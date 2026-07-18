@@ -17,7 +17,7 @@ import { issueDeviceToken } from '../auth/jwt.js';
 import { config } from '../config.js';
 import { query, withTransaction } from '../db/pool.js';
 import { audit } from '../lib/audit.js';
-import { FREE_TIER_LIMIT, checkClientQuota, createWatchLink } from '../lib/plan.js';
+import { FREE_TIER_LIMIT, checkClientQuota, createWatchLink, getInitialThreshold } from '../lib/plan.js';
 
 /** ペアリングコードのTTL（分）。spec: 15分。 */
 const PAIRING_CODE_TTL_MINUTES = 15;
@@ -134,11 +134,8 @@ export default async function pairingRoutes(app: FastifyInstance): Promise<void>
       const pairing = codeRes.rows[0];
       if (!pairing) return { error: 'invalid_code' as const };
 
-      // 自己申告に基づく初期閾値（spec 5.3）
-      const initialThreshold =
-        usage_frequency === 'frequent'
-          ? config.FREQUENT_THRESHOLD_MINUTES
-          : config.DEFAULT_THRESHOLD_MINUTES;
+      // 自己申告 + platform に基づく初期閾値（spec 5.3 + iOS 対応）
+      const initialThreshold = getInitialThreshold(platform, usage_frequency);
 
       // クライアント作成。
       // last_alive_event_at を now() にするのは、ペアリング直後に

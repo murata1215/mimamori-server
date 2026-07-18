@@ -7,10 +7,37 @@
  * コピーすると片方だけ無料枠が無制限、という課金漏れが起きるため1箇所に置く。
  */
 import type { PoolClient } from 'pg';
+import { config } from '../config.js';
 import { query } from '../db/pool.js';
 
 /** 無料枠の見守り対象数。3人目から課金（spec 5）。 */
 export const FREE_TIER_LIMIT = 2;
+
+/**
+ * クライアント新規作成時の初期閾値（分）を決定する。
+ *
+ * 【iOS 対応】
+ * iOS はバックグラウンド実行が OS 任せで 15分周期ハートビートが保証されない。
+ * screen_on_count / had_app_usage 相当の API もないため、生存シグナル間隔が
+ * Android より長くなる。初期閾値を長めに設定して誤報を防ぐ。
+ * 学習エンジンが実シグナル間隔の p99 を学習すれば自然と適切な値に収束する。
+ *
+ * @param platform - 端末の platform（'ios', 'android' 等）
+ * @param usageFrequency - オンボーディングの自己申告（'frequent' | 'occasional' | undefined）
+ * @returns 初期閾値（分）
+ */
+export function getInitialThreshold(
+  platform: string,
+  usageFrequency?: string,
+): number {
+  if (usageFrequency === 'frequent') {
+    return config.FREQUENT_THRESHOLD_MINUTES;
+  }
+  if (platform.toLowerCase() === 'ios') {
+    return config.DEFAULT_THRESHOLD_MINUTES_IOS;
+  }
+  return config.DEFAULT_THRESHOLD_MINUTES;
+}
 
 /** 見守り枠の判定結果 */
 export interface QuotaCheck {
