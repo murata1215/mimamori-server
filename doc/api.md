@@ -291,6 +291,42 @@ watch_links・スタンプ履歴・ステータス履歴はそのまま継続す
 
 ## ウォッチャー 🔒watcher
 
+### `GET /v1/clients/:client_id/activity` — 日次活動サマリ
+過去N日間の日別活動量。`?days=3`（1-7、デフォルト3）。
+日付は Asia/Tokyo 基準。古い日→新しい日の順。データ無し日は 0 埋め。
+**操作時刻・アプリ名・位置は一切含まない**（原則1）。
+```json
+→ 200 {
+    "client_id": "uuid",
+    "days": [
+      {
+        "date": "2026-07-16",
+        "screen_on_count": 35,
+        "app_usage_slots": 9,
+        "movement_slots": 5,
+        "heartbeat_count": 68,
+        "active_buckets": 3,
+        "battery_min": 15,
+        "battery_max": 98
+      },
+      { "date": "2026-07-17", "screen_on_count": 47, ... },
+      { "date": "2026-07-18", "screen_on_count": 12, ... }
+    ]
+  }
+→ 404 not_found   // 権限なし
+```
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `date` | `string` (YYYY-MM-DD) | 日付（Asia/Tokyo） |
+| `screen_on_count` | `int` | スクリーンON回数の合計 |
+| `app_usage_slots` | `int` | アプリ利用ありの15分スロット数 |
+| `movement_slots` | `int` | 移動ありの15分スロット数 |
+| `heartbeat_count` | `int` | 受信ハートビート数 |
+| `active_buckets` | `int` (0-6) | 活動があった4h時間帯バケット数 |
+| `battery_min` | `int?` | バッテリー最小値（データ無し日は null） |
+| `battery_max` | `int?` | バッテリー最大値（データ無し日は null） |
+
 ### `GET /v1/clients`
 **返すのはステータスのみ。イベントデータは絶対に返さない**（原則1）。
 緊急度順（SOS→ALERT→CONFIRMING→WATCH→ALIVE）にソート済み。

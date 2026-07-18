@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-07-18 — 日次活動サマリ API
+
+ウォッチャー詳細画面に「過去N日間の活動量」を表示するための集計API。
+
+- `GET /v1/clients/:client_id/activity?days=3` 🔒watcher: 日別の活動量を集計して返す。
+  days は 1-7（デフォルト3）。古い日→新しい日の順。データ無し日は 0 埋め。
+- 集計項目: screen_on_count / app_usage_slots / movement_slots / heartbeat_count /
+  active_buckets (4h時間帯バケット数, 0-6) / battery_min / battery_max。
+- `events.meta` (jsonb) を Asia/Tokyo の日付境界で GROUP BY。
+- zod スキーマで固定。操作時刻・アプリ名・位置は一切返さない（原則1）。
+- 判定エンジン・状態遷移・通知は無改修。
+
 ## 2026-07-18 — アクティブ SOS 取得 API
 
 ウォッチャーが FCM 通知を受け取れなかった場合でも、クライアント一覧で `status='SOS'` を

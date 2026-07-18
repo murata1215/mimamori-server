@@ -53,6 +53,38 @@ const statusHistoryItemSchema = z.object({
 });
 
 /**
+ * 日次活動サマリの要素スキーマ。
+ *
+ * 【プライバシー原則】
+ * 返すのは日単位の集計値のみ。時間帯別の詳細・操作時刻・アプリ名は返さない。
+ * active_buckets は「6つの4h枠のうち何枠で活動があったか」であり、
+ * 「何時に活動したか」は推測できない粒度に留める。
+ */
+const activityDaySchema = z.object({
+  /** 日付（Asia/Tokyo 基準、YYYY-MM-DD） */
+  date: z.string(),
+  /** スクリーンON回数の合計 */
+  screen_on_count: z.number().int(),
+  /** アプリ利用ありのスロット数（15分単位） */
+  app_usage_slots: z.number().int(),
+  /** 移動ありのスロット数（15分単位） */
+  movement_slots: z.number().int(),
+  /** 受信したハートビート数 */
+  heartbeat_count: z.number().int(),
+  /** 活動があった時間帯バケット数（4h刻み、0-6） */
+  active_buckets: z.number().int(),
+  /** バッテリー最小値 */
+  battery_min: z.number().int().nullable(),
+  /** バッテリー最大値 */
+  battery_max: z.number().int().nullable(),
+});
+
+const activityResponseSchema = z.object({
+  client_id: z.string().uuid(),
+  days: z.array(activityDaySchema),
+});
+
+/**
  * SOS詳細スキーマ。位置情報を含む唯一のレスポンス。
  */
 const sosDetailSchema = z.object({
@@ -353,5 +385,97 @@ export default async function watcherViewRoutes(app: FastifyInstance): Promise<v
     }
 
     return reply.send({ ok: true });
+  });
+
+  /**
+   * GET /v1/clients/:client_id/activity — 日次活動サマリ
+   *
+   * 【プライバシー原則】(原則1)
+   * 日単位の集計値のみ返す。操作時刻・行動詳細・個別イベントは返さない。
+   * zod スキーマで固定し、ここに列挙した以外のフィールドは漏れ出さない。
+   *
+   * days 配列は古い日→新しい日の順（時系列順）。
+   * データが無い日は 0 埋めで含める（Flutter 側で日ごとのカードを一定数表示するため）。
+   */
+  app.get('/v1/clients/:client_id/activity', { preHandler: app.requireWatcher }, async (req, reply) => {
+    const params = z.object({ client_id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ error: 'invalid_request' });
+
+    const queryParams = z.object({
+      days: z.coerce.number().int().min(1).max(7).default(3),
+    }).safeParse(req.query);
+    const days = queryParams.success ? queryParams.data.days : 3;
+
+    const clientId = params.data.client_id;
+
+    if (!(await canWatch(req.watcherId!, clientId))) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+
+    // generate_series で days 分の日付を生成し、LEFT JOIN で 0 埋め
+    const res = await query<{
+      date: string;
+      screen_on_count: string;
+      app_usage_slots: string;
+      movement_slots: string;
+      heartbeat_count: string;
+      active_buckets: string;
+      battery_min: number | null;
+      battery_max: number | null;
+    }>(
+      `WITH date_range AS (
+         SELECT d::date AS day
+         FROM generate_series(
+           (now() AT TIME ZONE 'Asia/Tokyo')::date - ($2 - 1),
+           (now() AT TIME ZONE 'Asia/Tokyo')::date,
+           '1 day'::interval
+         ) AS d
+       ),
+       daily AS (
+         SELECT
+           (occurred_at AT TIME ZONE 'Asia/Tokyo')::date AS day,
+           COALESCE(SUM((meta->>'screen_on_count')::int), 0) AS screen_on_count,
+           COUNT(*) FILTER (WHERE (meta->>'had_app_usage')::boolean = true) AS app_usage_slots,
+           COUNT(*) FILTER (WHERE (meta->>'had_movement')::boolean = true) AS movement_slots,
+           COUNT(*) AS heartbeat_count,
+           COUNT(DISTINCT (EXTRACT(hour FROM occurred_at AT TIME ZONE 'Asia/Tokyo')::int / 4)) AS active_buckets,
+           MIN((meta->>'battery_level')::int) AS battery_min,
+           MAX((meta->>'battery_level')::int) AS battery_max
+         FROM events
+         WHERE client_id = $1
+           AND event_type = 'heartbeat'
+           AND occurred_at >= (now() AT TIME ZONE 'Asia/Tokyo')::date - ($2 - 1)
+         GROUP BY day
+       )
+       SELECT
+         to_char(dr.day, 'YYYY-MM-DD') AS date,
+         COALESCE(d.screen_on_count, 0) AS screen_on_count,
+         COALESCE(d.app_usage_slots, 0) AS app_usage_slots,
+         COALESCE(d.movement_slots, 0) AS movement_slots,
+         COALESCE(d.heartbeat_count, 0) AS heartbeat_count,
+         COALESCE(d.active_buckets, 0) AS active_buckets,
+         d.battery_min,
+         d.battery_max
+       FROM date_range dr
+       LEFT JOIN daily d ON d.day = dr.day
+       ORDER BY dr.day ASC`,
+      [clientId, days],
+    );
+
+    const response = {
+      client_id: clientId,
+      days: res.rows.map((r) => ({
+        date: r.date,
+        screen_on_count: Number(r.screen_on_count),
+        app_usage_slots: Number(r.app_usage_slots),
+        movement_slots: Number(r.movement_slots),
+        heartbeat_count: Number(r.heartbeat_count),
+        active_buckets: Number(r.active_buckets),
+        battery_min: r.battery_min,
+        battery_max: r.battery_max,
+      })),
+    };
+
+    return sendValidated(reply, activityResponseSchema, response);
   });
 }
