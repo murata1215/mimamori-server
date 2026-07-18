@@ -59,6 +59,59 @@ class NoopFcmDriver implements FcmDriver {
   }
 }
 
+/** high priority で送る kind（全画面通知・Doze中でも起こす） */
+const HIGH_PRIORITY_KINDS: PushKind[] = ['confirming', 'alert', 'sos', 'silent'];
+
+/**
+ * FCM に渡すメッセージ本体を組み立てる（純粋関数・副作用なし）。
+ *
+ * kind に応じて Android / iOS(APNs) の優先度と配信形態を切り替える:
+ *   - silent: data-only。Android=high priority、iOS=background push
+ *     (`content-available:1` + apns-priority 5)。iOS は APNs 側の指定が無いと
+ *     background push が配信されない／アプリが起きないため必須。
+ *   - confirming/alert/sos: 高優先（Android=high / iOS apns-priority=10 + sound）
+ *   - watch/permission/outage/stamp: 通常優先
+ *
+ * silent は notification を含めない（通知が表示されてしまう）。iOS の aps にも
+ * alert/sound/badge を入れない（純粋な background push にする）。
+ */
+export function buildFcmMessage(req: PushRequest): Record<string, unknown> {
+  const highPriority = HIGH_PRIORITY_KINDS.includes(req.kind);
+  const isSilent = req.kind === 'silent';
+
+  // iOS の aps ペイロード。
+  //   silent  → content-available のみ（background push）
+  //   非silent → 高優先時は sound を鳴らす。title/body は top-level notification から
+  //              APNs alert へ自動マッピングされる。
+  const aps: Record<string, unknown> = isSilent
+    ? { 'content-available': 1 }
+    : highPriority
+      ? { sound: 'default' }
+      : {};
+
+  const message: Record<string, unknown> = {
+    token: req.token,
+    data: { kind: req.kind, ...(req.data ?? {}) },
+    android: {
+      priority: highPriority ? 'high' : 'normal',
+      ...(isSilent ? {} : { ttl: 60 * 60 * 1000 }),
+    },
+    apns: {
+      headers: {
+        // APNs は 10=即時 / 5=省電力（background push は 5 必須）
+        'apns-priority': isSilent ? '5' : highPriority ? '10' : '5',
+      },
+      payload: { aps },
+    },
+  };
+
+  if (!isSilent) {
+    message.notification = { title: req.title ?? '', body: req.body ?? '' };
+  }
+
+  return message;
+}
+
 /**
  * firebase-admin を使う実ドライバ。
  */
@@ -73,32 +126,10 @@ class FirebaseFcmDriver implements FcmDriver {
   }
 
   /**
-   * メッセージを1件送信する。
-   *
-   * kind に応じて Android の priority / channel を切り替える:
-   *   - silent: data-only + high priority（Doze中でも端末を起こす）
-   *   - confirming/alert/sos: high priority（全画面インテント通知のため）
-   *   - watch/permission: normal priority（電池を無駄に使わない）
+   * メッセージを1件送信する。ペイロード組み立ては {@link buildFcmMessage} に委譲。
    */
   async send(req: PushRequest): Promise<PushResult> {
-    const highPriority = ['confirming', 'alert', 'sos', 'silent'].includes(req.kind);
-
-    // silent push は notification を含めてはならない（通知が表示されてしまう）。
-    // data-only メッセージにすることでアプリが黙って起こされる。
-    const isSilent = req.kind === 'silent';
-
-    const message: Record<string, unknown> = {
-      token: req.token,
-      data: { kind: req.kind, ...(req.data ?? {}) },
-      android: {
-        priority: highPriority ? 'high' : 'normal',
-        ...(isSilent ? {} : { ttl: 60 * 60 * 1000 }),
-      },
-    };
-
-    if (!isSilent) {
-      message.notification = { title: req.title ?? '', body: req.body ?? '' };
-    }
+    const message = buildFcmMessage(req);
 
     try {
       await this.messaging.send(message);

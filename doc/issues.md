@@ -2,7 +2,8 @@
 
 ## Phase 1 — 本番投入までに必須
 
-- [ ] **Firebase 認証情報の設定**（`FIREBASE_CREDENTIALS_PATH`）— 未設定だと通知が一切飛ばない。no-opドライバで静かに動くため気づきにくい。本番前の最優先事項
+- [x] **Firebase 認証情報の設定**（`FIREBASE_CREDENTIALS_PATH`）— 2026-07-18 完了。サービスアカウント JSON を `credentials/`（git 管理外）に配置し `.env` を有効化。起動ログに `Firebase Admin SDK を初期化しました` を確認。あわせて iOS 向け `apns` フィールドを付与（`buildFcmMessage`）
+- [ ] **APNs 認証キー (.p8) の Firebase コンソール登録** — iOS へのプッシュ配信に必須（サーバー外設定）。未登録だと iOS 端末には通知が届かない
 - [ ] 外形監視の設定（UptimeRobot等 → `/healthz` 1分間隔）— spec 7.3 の必須要件
 - [ ] systemd ユニットのインストール（`deploy/mimamori-server.service`）
 - [ ] Caddy のリバースプロキシ設定確認（`mimamori-server.devrelay.io` → `localhost:9021`）

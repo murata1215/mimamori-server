@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-07-18 — FCM 有効化と iOS（APNs）向けペイロード対応
+
+Firebase の認証情報を設定して FCM を有効化し、あわせて iOS でプッシュが正しく届くよう
+APNs 用のフィールドを付与した。
+
+- **FCM 有効化**（コード変更なし）: サービスアカウント JSON を `credentials/` に配置し、
+  `.env` の `FIREBASE_CREDENTIALS_PATH` を有効化。`initFcm()` はパス設定だけで実ドライバに
+  切り替わる設計のため無改修。`credentials/` は `.gitignore` に追加（public repo への漏洩防止）。
+- **iOS(APNs) 対応**: FCM メッセージに `apns` フィールドが無く、iOS では silent（background）
+  push が配信されずアプリが起きない片肺状態だった。`src/notify/fcm.ts` のペイロード組み立てを
+  純粋関数 `buildFcmMessage(req)` に切り出し、全 kind に `apns.headers['apns-priority']` と
+  `apns.payload.aps` を付与:
+  - `silent` → `content-available:1` ＋ `apns-priority:5`（notification / sound を含めない純粋な background push）
+  - `confirming` / `alert` / `sos` → `apns-priority:10` ＋ `sound:'default'`
+  - `watch` / `permission` / `outage` / `stamp` → `apns-priority:5`
+- Android の挙動（high/normal priority・ttl）は不変。判定エンジン・状態遷移・通知ディスパッチは無改修。
+- 通常通知（`notification` フィールド付き）はもともと FCM がトークン→APNs 自動配信するため元から届く。
+  今回の対応は silent push を含む配信の確実化。iOS 配信には **Firebase コンソールへの APNs 認証キー
+  (.p8) 登録が前提**（サーバー外）。
+- 単体テスト `tests/fcm-message.test.ts` を5件追加 → 計228件 green。
+
 ## 2026-07-18 — 空ボディ DELETE の 400 を修正（Flutter dio 互換）
 
 Flutter の dio クライアントは DELETE でも `Content-Type: application/json` を付けるが

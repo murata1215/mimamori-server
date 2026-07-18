@@ -62,6 +62,15 @@ API の全量は `doc/api.md` を参照。代表的なものは以下。
 ウォッチャーに返すのはステータスと遷移時刻のみ。集計 API も含め、操作時刻・行動詳細・位置は返さない
 （詳細は `rules/project.md`）。
 
+## プッシュ通知（FCM / APNs）
+
+通知は FCM で配信する。`.env` の `FIREBASE_CREDENTIALS_PATH` が未設定だと no-op ドライバに
+なり通知が一切飛ばないため、本番では必須（認証情報は `credentials/` に置き git 管理外）。
+iOS では silent（background）push を届けるために `apns` フィールドを付与している
+（`kind:'silent'` は `content-available:1` + `apns-priority:5`）。ペイロード仕様は
+`buildFcmMessage`（`src/notify/fcm.ts`）に集約。iOS 配信には Firebase コンソールへの
+APNs 認証キー (.p8) 登録が別途必要。
+
 ## 新しいセンサーを追加するとき
 
 `src/engine/sources.ts` に定義を足し、Webhook アダプタを書くだけでよい。

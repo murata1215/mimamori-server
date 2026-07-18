@@ -9,3 +9,6 @@ dist/
 
 # 一次情報の仕様書。事業戦略を含むため公開リポジトリには置かない
 .devrelay-files/
+
+# Firebase サービスアカウント秘密鍵。public repo に絶対に載せない
+credentials/

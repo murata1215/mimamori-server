@@ -537,6 +537,21 @@ HMAC-SHA256（`sign` / `t` / `nonce` ヘッダ）＋5分のリプレイ窓。未
 `outage` はサービス停止の一斉通知で、特定クライアント文脈が存在しないため
 `client_id` / `client_name` を持たない。
 
+### プラットフォーム別の配信（Android / iOS）
+
+サーバーはトークン宛に送るだけでプラットフォームを区別しない（FCM が iOS 分を APNs へ
+自動配信する）。ただし iOS で silent（background）push を確実に届けるため、メッセージには
+`apns` フィールドを付与している（`src/notify/fcm.ts` の `buildFcmMessage`）。
+
+| kind | Android priority | apns-priority | iOS aps |
+|---|---|---|---|
+| `silent` | high | 5 | `content-available:1`（notification / sound なし = background push） |
+| `confirming` / `alert` / `sos` | high | 10 | `sound:'default'` |
+| `watch` / `permission` / `outage` / `stamp` | normal | 5 | （sound なし） |
+
+iOS へ届けるには **Firebase コンソールに APNs 認証キー (.p8) の登録が必要**（サーバー外設定）。
+silent push は OS 判断で間引かれ得るため、iOS の生存シグナルはこれに依存しない（初期閾値 24h）。
+
 ---
 
 ## エラー形式

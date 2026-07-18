@@ -41,6 +41,20 @@
 - **権限のないクライアント操作は一律 404**（存在を秘匿。403 と区別しない）。
 - watch_link の増減は `audit_log`（`watch_link_removed` など）に必ず残す（免責の証跡・絶対ルール5）。
 
+## プッシュ通知（FCM / APNs）
+
+- **メッセージ組み立ては純粋関数 `buildFcmMessage(req)`（`src/notify/fcm.ts`）に集約。**
+  `FirebaseFcmDriver.send()` はこれを呼ぶだけ。優先度・ペイロード仕様を変える時はここを直し、
+  `tests/fcm-message.test.ts` で固定する。
+- **iOS には `apns` フィールドが必須。** サーバーはトークン宛に送るだけで OS を区別しないが、
+  silent（`kind:'silent'`）push は `apns.payload.aps['content-available']:1` ＋
+  `apns-priority:5` が無いと iOS で配信されずアプリが起きない。silent の aps には
+  alert / sound / badge を混ぜない（純粋な background push にする）。
+- **優先度対応**: `silent`=Android high / apns 5、`confirming`/`alert`/`sos`=high / apns 10 + sound、
+  `watch`/`permission`/`outage`/`stamp`=normal / apns 5。Android 挙動（priority・ttl）は変えない。
+- **iOS 配信は Firebase コンソールの APNs 認証キー (.p8) 登録が前提**（サーバー外）。
+  silent push は OS に間引かれ得るため、iOS の生存判定はこれに依存させない（初期閾値 24h）。
+
 ## Flutter クライアント互換
 
 - **DELETE / POST の空ボディ + `Content-Type: application/json` を受理する。** dio がこの形で
