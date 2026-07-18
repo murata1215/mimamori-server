@@ -43,6 +43,25 @@ npm test            # テスト（実DBを使う統合テストを含む）
 npm run build       # ビルド
 ```
 
+## 主なエンドポイント
+
+API の全量は `doc/api.md` を参照。代表的なものは以下。
+
+| 区分 | エンドポイント | 概要 |
+|------|----------------|------|
+| 公開 | `GET /statusz` | ログイン不要の稼働状況・利用者数（集計値のみ） |
+| 監視 | `GET /healthz` / `GET /livez` | 見守りが機能しているか / プロセス生存のみ |
+| 見守られ側 | `POST /v1/clients/pair` / `POST /v1/clients/claim` | ペアリング（順・逆方向） |
+| 見守られ側 | `POST /v1/clients/me/email` / `POST /v1/clients/login` | メール認証・機種変更 |
+| 見守られ側 | `POST /v1/heartbeat` / `POST /v1/sos` | 生存シグナル / SOS 発報 |
+| ウォッチャー | `GET /v1/clients` / `GET /v1/clients/:id/activity` | 一覧 / 日次活動サマリ |
+| ウォッチャー | `GET /v1/clients/:id/sos/active` | アクティブ SOS 取得（FCM 未達フォールバック） |
+| ウォッチャー | `DELETE /v1/clients/:id` | 見守り紐づけの解除（自分の watch_link のみ） |
+| 多対多 | `POST /v1/invite-codes` / `POST /v1/clients/join` | 追加ウォッチャーの招待・参加 |
+
+ウォッチャーに返すのはステータスと遷移時刻のみ。集計 API も含め、操作時刻・行動詳細・位置は返さない
+（詳細は `rules/project.md`）。
+
 ## 新しいセンサーを追加するとき
 
 `src/engine/sources.ts` に定義を足し、Webhook アダプタを書くだけでよい。

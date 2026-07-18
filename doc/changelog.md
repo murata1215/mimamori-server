@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-07-18 — 空ボディ DELETE の 400 を修正（Flutter dio 互換）
+
+Flutter の dio クライアントは DELETE でも `Content-Type: application/json` を付けるが
+ボディは空。Fastify のデフォルト JSON パーサーはこれを `FST_ERR_CTP_EMPTY_JSON_BODY` で
+400 にするため、実機の見守り解除が失敗していた。
+
+- `src/app.ts` で `application/json` のパーサーを上書きし、**空ボディを `undefined` として受理**する。
+  ハンドラ段階の `req.body ?? {}` ではパーサーが先に弾くため防げない（アプリ組み立て段階で対処）。
+- 全ルート（POST 含む）に適用。`POST /v1/sos/:id/resolve` の空ボディ問題も同時に根治。
+- 判定エンジン・状態遷移・通知は無改修。
+
 ## 2026-07-18 — 見守り解除 API
 
 ウォッチャーが自分の見守り紐づけ（watch_link）を解除する API を追加。
