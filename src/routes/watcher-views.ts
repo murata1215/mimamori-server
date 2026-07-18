@@ -145,6 +145,43 @@ export default async function watcherViewRoutes(app: FastifyInstance): Promise<v
   });
 
   /**
+   * GET /v1/clients/:client_id/sos/active — アクティブ（未解決）SOS の取得
+   *
+   * FCM 通知を受け取れなかった場合でも、クライアント一覧で status='SOS' を
+   * 検出した Flutter が incident_id を取得して SOS 画面に遷移できるようにする。
+   * 複数未解決がある場合は最新の1件を返す。
+   */
+  app.get('/v1/clients/:client_id/sos/active', { preHandler: app.requireWatcher }, async (req, reply) => {
+    const params = z.object({ client_id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ error: 'invalid_request' });
+
+    if (!(await canWatch(req.watcherId!, params.data.client_id))) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+
+    const res = await query(
+      `SELECT s.id, s.client_id, c.display_name AS client_name,
+              s.latitude, s.longitude, s.battery_level, s.fired_at, s.resolved_at,
+              s.location_captured_at
+         FROM sos_incidents s
+         JOIN clients c ON c.id = s.client_id
+        WHERE s.client_id = $1
+          AND s.resolved_at IS NULL
+          AND s.purge_after > now()
+        ORDER BY s.fired_at DESC
+        LIMIT 1`,
+      [params.data.client_id],
+    );
+
+    const incident = res.rows[0];
+    if (!incident) {
+      return reply.code(404).send({ error: 'not_found', message: 'アクティブなSOSはありません' });
+    }
+
+    return sendValidated(reply, sosDetailSchema, incident);
+  });
+
+  /**
    * GET /v1/sos/:id — SOS詳細（位置情報を含む）
    *
    * resolved後・purge後は404（flutter spec 4.2:

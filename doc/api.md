@@ -314,6 +314,19 @@ watch_links・スタンプ履歴・ステータス履歴はそのまま継続す
 [{ "from": "WATCH", "to": "ALIVE", "changed_at": "2026-07-16T..." }]
 ```
 
+### `GET /v1/clients/:client_id/sos/active`
+クライアントのアクティブ（未解決）SOS を取得。複数あれば最新1件。
+FCM 通知を受け取れなかった場合のフォールバック。`status === 'SOS'` のクライアントに対して呼ぶ。
+```json
+→ 200 {
+    "id": "uuid", "client_id": "uuid", "client_name": "母",
+    "latitude": 35.68, "longitude": 139.77, "battery_level": 42,
+    "fired_at": "2026-07-18T...", "resolved_at": null,
+    "location_captured_at": "2026-07-18T01:00:00.000Z"
+  }
+→ 404 not_found   // アクティブ SOS なし or 権限なし
+```
+
 ### `GET /v1/sos/:id`
 位置を含む唯一のレスポンス。**resolve後・purge後(30日)は404**。
 ```json

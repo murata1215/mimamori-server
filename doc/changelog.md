@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-07-18 — アクティブ SOS 取得 API
+
+ウォッチャーが FCM 通知を受け取れなかった場合でも、クライアント一覧で `status='SOS'` を
+検出した Flutter が `incident_id` を取得して SOS 画面に遷移できるようにする。
+
+- `GET /v1/clients/:client_id/sos/active` 🔒watcher: アクティブ（未解決）SOS の最新1件を返す。
+  既存の `sosDetailSchema` を流用。watch_links 権限チェック。アクティブなし / 権限なし → 404。
+- 判定エンジン・状態遷移・通知は無改修。
+
 ## 2026-07-18 — iOS 端末向け初期しきい値
 
 iOS はバックグラウンド実行が OS 任せで 15分周期ハートビートが保証されず、

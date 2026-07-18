@@ -188,6 +188,92 @@ describe('GET / — 公開ステータスページ（HTML）', () => {
   });
 });
 
+describe('GET /v1/clients/:client_id/sos/active — アクティブSOS取得', () => {
+  async function fireSos(): Promise<string> {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/sos',
+      headers: { authorization: `Bearer ${deviceToken}` },
+      payload: { lat: 35.68, lng: 139.77, battery_level: 42, location_captured_at: '2026-07-18T01:00:00Z' },
+    });
+    return res.json().incident_id;
+  }
+
+  it('アクティブ SOS がある場合 200 で incident 詳細が返る', async () => {
+    const incidentId = await fireSos();
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/clients/${clientId}/sos/active`,
+      headers: { authorization: `Bearer ${watcherToken}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.id).toBe(incidentId);
+    expect(body.client_id).toBe(clientId);
+    expect(body.client_name).toBe(CLIENT_NAME);
+    expect(body.latitude).toBe(35.68);
+    expect(body.longitude).toBe(139.77);
+    expect(body.battery_level).toBe(42);
+    expect(body.fired_at).toBeTruthy();
+    expect(body.resolved_at).toBeNull();
+    expect(body.location_captured_at).toBe('2026-07-18T01:00:00.000Z');
+  });
+
+  it('アクティブ SOS がない場合 404', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/clients/${clientId}/sos/active`,
+      headers: { authorization: `Bearer ${watcherToken}` },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('resolve 済みの SOS しかない場合 404', async () => {
+    const incidentId = await fireSos();
+
+    // resolve
+    await app.inject({
+      method: 'POST',
+      url: `/v1/sos/${incidentId}/resolve`,
+      headers: { authorization: `Bearer ${watcherToken}` },
+      payload: {},
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/clients/${clientId}/sos/active`,
+      headers: { authorization: `Bearer ${watcherToken}` },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('権限のないクライアントへは 404（存在を漏らさない）', async () => {
+    await fireSos();
+
+    // 別の watcher を作成
+    const email2 = `unrelated-${Date.now()}@example.test`;
+    const w2 = await app.inject({
+      method: 'POST',
+      url: '/v1/watchers',
+      payload: { display_name: '無関係', email: email2, password: 'password1234' },
+    });
+    const otherToken = w2.json().access_token;
+    const otherWatcherId = w2.json().watcher_id;
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/clients/${clientId}/sos/active`,
+      headers: { authorization: `Bearer ${otherToken}` },
+    });
+    expect(res.statusCode).toBe(404);
+
+    // cleanup
+    await query('DELETE FROM watchers WHERE id = $1', [otherWatcherId]);
+  });
+});
+
 describe('POST /v1/sos/:id/resolve — 空ボディ受理（依頼2）', () => {
   /** SOS を発動して incident_id を返す */
   async function fireSos(): Promise<string> {
